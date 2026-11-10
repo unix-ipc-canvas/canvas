@@ -1,5 +1,7 @@
 # 공유 캔버스 서버
 
+UNIX 시스템 프로그래밍 2팀
+
 UNIX시스템프로그래밍 설계과제 (2026년 2학기). 여러 클라이언트가 하나의 캔버스에 동시에 그리는 서버를 pipe, message queue, shared memory 3가지로 구현하고 성능을 비교합니다.
 
 - 제출: 11월 30일(월), e-class
@@ -45,7 +47,7 @@ make ipcclean   # 비정상 종료로 남은 IPC 자원 삭제
 make dist       # 제출용 tar
 ```
 
-팀 번호가 정해지면 `Makefile`의 `TEAM_NO`를 고칩니다. System V key가 60xxy 규칙으로 정해집니다.
+팀 번호는 2입니다 (`Makefile`의 `TEAM_NO`). System V key는 60xxy 규칙에 따라 60020 ~ 60029를 씁니다.
 
 ## 작업 규칙
 
@@ -54,6 +56,8 @@ make dist       # 제출용 tar
 3. **설계 선택은 실행 옵션으로 만듭니다.** 원인 분석 실험은 옵션 하나만 바꿔 다시 돌리는 방식으로 합니다. 옵션 목록은 `docs/design.md`.
 4. **측정은 측정용 컴퓨터 1대에서만 합니다.** 다른 컴퓨터에서 잰 숫자는 보고서에 쓰지 않습니다.
 5. **예측은 구현 전에 커밋합니다.** `docs/prediction.md`를 채워 커밋한 뒤에 `server.c`, `client.c`를 시작합니다.
+
+커밋, 브랜치, 이슈, PR 제목 형식은 [CONTRIBUTING.md](CONTRIBUTING.md)를 따릅니다. 예: `feat(pipe): FIFO 요청 채널 구현`
 
 ## 매번 적는 기록 3가지
 
