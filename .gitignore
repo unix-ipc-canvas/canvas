@@ -1,0 +1,8 @@
+bin/
+build/
+*.o
+*.tar
+*.ppm
+core
+.vscode/
+# 측정 원자료(results/*.csv)는 제출물이므로 커밋한다
