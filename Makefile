@@ -9,8 +9,8 @@
 #   make dist       제출용 osproject_<팀번호>.tar 만들기
 #   make clean
 #
-# 팀 번호가 정해지면 TEAM_NO 를 고친다 (System V key = 60xxy 규칙).
-TEAM_NO ?= 0
+# 2팀: System V key = 60020 ~ 60029 (60xxy 규칙, xx = 02).
+TEAM_NO ?= 2
 
 CC      := gcc
 CFLAGS  ?= -O2 -g -Wall -Wextra -std=gnu11

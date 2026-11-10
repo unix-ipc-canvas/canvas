@@ -24,9 +24,9 @@
 #include <sys/types.h>
 #include "proto.h"
 
-/* System V key 규칙: 60xxy (xx = 팀 번호, y = 0~9). 팀 번호가 정해지면 Makefile 의 TEAM_NO 를 고친다. */
+/* System V key 규칙: 60xxy (xx = 팀 번호, y = 0~9). 2팀이므로 60020 ~ 60029. */
 #ifndef TEAM_NO
-#define TEAM_NO 0
+#define TEAM_NO 2
 #endif
 #define IPC_KEY(y) ((key_t)(60000 + TEAM_NO * 10 + (y)))
 
