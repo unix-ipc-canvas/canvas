@@ -21,6 +21,7 @@
 | `docs/verification/` | [테스트 명세](../verification/README.md) |
 | `docs/submission/` | [최종보고서·제출 준비 기준](../submission/report.md), [최종 발표 준비 기준](../submission/presentation.md) |
 | `docs/records/` | 덧붙이기만 하는 기록: [성능 예측](../records/prediction.md), [AI 활용 기록](../records/ai-log.md), [작업 시간](../records/worklog.csv), AI 대화 기록(`ai-chats/`) |
+| `docs/assets/` | 문서와 GitHub 화면에 쓰는 이미지 |
 | `docs/CONTRIBUTING.md` | [이슈·PR 작성 규칙](../CONTRIBUTING.md) |
 
 - 같은 내용은 담당 문서 한 곳에만 쓰고 나머지는 링크한다. 실행 안내는 루트 `README.md`, 작업 원칙은 `AGENTS.md`가 담당한다.

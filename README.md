@@ -1,5 +1,7 @@
 # 공유 캔버스 서버
 
+![공유 캔버스 서버](docs/assets/social-preview.png)
+
 UNIX 시스템 프로그래밍 2팀
 
 ![C](https://img.shields.io/badge/C-gnu11-A8B9CC?style=flat-square&logo=c&logoColor=white)
@@ -33,6 +35,7 @@ canvas/
     ├── verification/   # 테스트 명세
     ├── submission/     # 최종보고서·발표 준비
     ├── records/        # 성능 예측, AI 활용 기록, 작업 시간
+    ├── assets/         # 문서에 쓰는 이미지
     └── CONTRIBUTING.md # 이슈·PR 작성 규칙
 ```
 
