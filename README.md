@@ -39,6 +39,25 @@ canvas/
     └── CONTRIBUTING.md # 이슈·PR 작성 규칙
 ```
 
+## 역할 분담
+
+IPC는 한 사람이 하나씩 맡고, 공통 코드·보고서·발표는 셋으로 나눈다. 쉬운 IPC에는 무거운 공통 코드를 붙여 양을 맞췄다. 1단계 측정, 2단계 분석, 보고서 6.6절(IPC 선택 가이드라인)과 8.1절(결론)은 담당과 관계없이 셋이 함께 한다. 파일별 책임은 [구현 방향](docs/design/plan.md#구현-방향), 기한은 [단계별 계획](docs/design/plan.md#단계별-계획)을 따른다.
+
+| | A: pipe + 서버 | B: mq + 클라이언트, 예측·문서 총괄 | C: shm + 측정 |
+| --- | --- | --- | --- |
+| 팀원 | | | |
+| IPC | `transport_pipe.c` | `transport_mq.c` (큰 메시지 분할·재조립, 응답 큐 방식 결정) | `transport_shm.c` (링 버퍼, 슬롯, 세마포어, 알림 방식 결정) |
+| 공통 코드 | `canvas.c`, `server.c` (스레드, 작업 큐, 락 옵션, 종료 처리) | `client.c` (워크로드 생성, CSV 출력), `verify.c` | `util.c`, `bench.c` |
+| 검증·측정 | `verify.sh`의 실행 검사 T-10~T-31 | T-40·T-41, `readme.txt`, `make dist`와 tar 점검 | 측정 스크립트, 그래프, CSV 열 확정, 측정용 컴퓨터 관리 |
+| 앞장설 단계 | T6 설계 개선 구현 (타일 락, rwlock, 메모리 절감) | T3 워크로드 명세와 예측 | T2 1단계 측정, T5 원인 확인 실험 설계 |
+| 보고서 | 4장, 5장, 6.1, 6.5 | 표지, 1장, 3장, 7장, 8.2 | 2장, 6.2~6.4 |
+| 발표 | 데모 촬영 | 발표자료 취합, 제출 점검 | 측정 결과 슬라이드 |
+| 그 밖 | FIFO를 pipe로 인정하는지 교수님께 확인 | AI 활용 기록 정리 | 측정 환경 기록 |
+
+- 팀원 칸은 비어 있다. 11월 15일 팀 회의에서 채운다. 측정용 컴퓨터를 가진 사람이 C를 맡는다.
+- 세 사람 모두 11월 15일까지 자기 `transport_*.c`의 기본 송수신을 끝낸다. 늦으면 C의 1단계 측정이 시작되지 못해 예측과 구현이 함께 밀린다.
+- 예측을 커밋하기 전에는 A는 `canvas.c`, B는 `verify.c`, C는 `util.c`를 먼저 만든다. `server.c`, `client.c`는 예측 커밋 뒤에 시작한다.
+
 ## 기술 스택
 
 C(gnu11), gcc, GNU make, POSIX 스레드를 쓴다. IPC는 FIFO, System V message queue, System V shared memory와 semaphore다. 외부 라이브러리는 쓰지 않는다. 세부 제약은 [요구사항](docs/requirements/README.md#실행-환경과-제약)을 참고한다.
@@ -99,7 +118,7 @@ make test
 | 문서 | 담당 내용 |
 | --- | --- |
 | [요구사항](docs/requirements/README.md) | 범위, 용어, 기능, 제약, 완료 기준, 문서 배치 |
-| [구현 계획](docs/design/plan.md) | 구조, 파일 책임, 담당, 일정, 미결정 |
+| [구현 계획](docs/design/plan.md) | 구조, 파일 책임, 일정, 미결정 |
 | [설계 명세](docs/design/README.md) | 채널, 스레드, 공유 자원과 동기화, 실행 옵션 |
 | [측정 방법](docs/measurement/README.md) | 타임스탬프 위치, 통계, 자원 사용량, 원자료 형식 |
 | [테스트 명세](docs/verification/README.md) | 검증 항목과 판정 기준 |
