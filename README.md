@@ -6,12 +6,11 @@ UNIX 시스템 프로그래밍 2팀
 
 처음 보는 팀원은 쉬운 말로 쓴 [팀 프로젝트 안내서](https://claude.ai/artifact/9rcWLcBnxL2cK6A4RLx5Lc)부터 읽는다.
 
-프로젝트 파일은 다음과 같이 배치한다. 파일별 책임은 [구현 방향](docs/tech-specs/README.md#구현-방향)을 참고한다.
+프로젝트 파일은 다음과 같이 배치한다. 파일별 책임은 [구현 방향](docs/tech-specs/01-plan.md#구현-방향)을 참고한다.
 
 ```text
 canvas/
 ├── AGENTS.md         # 작업 지침
-├── CONTRIBUTING.md   # 커밋·이슈·PR 형식
 ├── Makefile
 ├── readme.txt        # 제출용 readme
 ├── include/          # proto.h, transport.h
@@ -22,10 +21,13 @@ canvas/
 ├── scripts/          # 검증·측정 스크립트
 ├── results/          # 측정 원자료 CSV
 └── docs/
-    ├── func-specs/   # 요구사항
-    ├── tech-specs/   # 구현 계획, 설계 명세, 측정 방법
-    ├── test-specs/   # 테스트 명세
-    └── …             # 과제 정리, 발표·제출 준비, 기록
+    ├── assignment/     # 과제 원문과 핵심 정리
+    ├── func-specs/     # 요구사항
+    ├── tech-specs/     # 구현 계획, 설계 명세, 측정 방법
+    ├── test-specs/     # 테스트 명세
+    ├── presentation/   # 최종보고서·발표 준비
+    ├── records/        # 성능 예측, AI 활용 기록, 작업 시간
+    └── collaboration.md  # 이슈·PR 작성 규칙
 ```
 
 ## 기술 스택
@@ -57,7 +59,7 @@ make
 
 ## 사용 방법
 
-구현되면 `bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 옵션의 초안은 [실행 옵션](docs/tech-specs/01-design.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
+구현되면 `bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 옵션의 초안은 [실행 옵션](docs/tech-specs/02-design.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
 
 ## 테스트
 
@@ -71,15 +73,45 @@ make test
 
 기능 명세·요구사항은 `docs/func-specs/`, 기술 명세·구현 계획은 `docs/tech-specs/`, 테스트 명세는 `docs/test-specs/`에서 관리한다.
 
-- [작업 지침](AGENTS.md): 읽는 순서, 문서별 역할, 코드·측정·기록 규칙
-- [커밋·이슈·PR 작성 규칙](CONTRIBUTING.md): 제목 형식, 브랜치, 템플릿
-- [과제 핵심 정리](docs/assignment-summary.md): 과제 요건, 제출물, 배점
-- [요구사항](docs/func-specs/README.md): 범위, 기능, 제약, 완료 기준
-- [구현 계획](docs/tech-specs/README.md): 구조, 파일 책임, 담당, 일정, 미결정
-- [설계 명세](docs/tech-specs/01-design.md): 채널, 스레드, 동기화, 실행 옵션
-- [측정 방법](docs/tech-specs/02-measurement.md): 타임스탬프, 통계, 원자료 형식
-- [테스트 명세](docs/test-specs/README.md): 검증 항목과 판정 기준
-- [발표·제출 준비](docs/presentation.md): 보고서 절별 출처, 발표자료 구성, 데모 시나리오
-- [성능 예측](docs/prediction.md): 워크로드 명세와 예측. 구현 전에 커밋한다
-- [AI 활용 기록](docs/ai-log.md): AI 사용 내용과 AI가 틀린 사례
-- [작업 시간](docs/worklog.csv): 날짜, 이름, 한 일, 시간
+문서 관리 원칙은 [작업 지침](AGENTS.md)을 따른다. 아래에서 변경할 내용의 담당 문서를 찾는다.
+
+### 과제
+
+| 문서 | 담당 내용 |
+| --- | --- |
+| [과제 핵심 정리](docs/assignment/README.md) | 과제가 요구하는 조건, 제출물, 배점, 확인이 필요한 것 |
+| [과제 소개](docs/assignment/UNIX시스템프로그래밍설계과제물소개%282026년%29.pdf) | 원문. 일정, 수행 방법, 주의 사항 |
+| [설계과제 안내문](docs/assignment/UNIX시스템프로그래밍_설계과제_안내문.docx) | 원문. 1·2단계 요건, 측정 요건, 제한 요건, 배점 |
+| [최종보고서 서식](docs/assignment/UNIX시스템프로그래밍_설계과제_최종보고서서식.docx) | 원문. 보고서 목차, 발표자료 구성 |
+
+### 요구사항·구조·검증
+
+| 문서 | 담당 내용 |
+| --- | --- |
+| [요구사항](docs/func-specs/README.md) | 범위, 용어, 기능, 제약, 완료 기준, 문서 배치 |
+| [구현 계획](docs/tech-specs/01-plan.md) | 구조, 파일 책임, 담당, 일정, 미결정 |
+| [설계 명세](docs/tech-specs/02-design.md) | 채널, 스레드, 공유 자원과 동기화, 실행 옵션 |
+| [측정 방법](docs/tech-specs/03-measurement.md) | 타임스탬프 위치, 통계, 자원 사용량, 원자료 형식 |
+| [테스트 명세](docs/test-specs/README.md) | 검증 항목과 판정 기준 |
+
+### 협업
+
+| 문서 | 담당 내용 |
+| --- | --- |
+| [작업 지침](AGENTS.md) | 읽는 순서, 문서별 역할, 코드·측정·기록 규칙 |
+| [이슈·PR 작성 규칙](docs/collaboration.md) | 이슈·브랜치·커밋·PR의 제목과 본문 작성 방법 |
+
+### 발표·제출
+
+| 문서 | 담당 내용 |
+| --- | --- |
+| [최종보고서·제출 준비 기준](docs/presentation/final-report.md) | 제출물 점검, 보고서 절별 출처, 캡처 목록 |
+| [최종 발표 준비 기준](docs/presentation/final-presentation.md) | 발표·제출 조건, 발표자료 구성, 데모 시나리오 |
+
+### 기록
+
+| 문서 | 담당 내용 |
+| --- | --- |
+| [성능 예측](docs/records/prediction.md) | 워크로드 명세와 예측. 구현 전에 커밋하고 이후에는 덧붙이기만 한다 |
+| [AI 활용 기록](docs/records/ai-log.md) | AI 사용 내용, AI가 틀린 사례, AI 코드의 결함 |
+| [작업 시간](docs/records/worklog.csv) | 날짜, 이름, 한 일, 시간 |
