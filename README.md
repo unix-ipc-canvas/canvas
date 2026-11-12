@@ -2,77 +2,84 @@
 
 UNIX 시스템 프로그래밍 2팀
 
-UNIX시스템프로그래밍 설계과제 (2026년 2학기). 여러 클라이언트가 하나의 캔버스에 동시에 그리는 서버를 pipe, message queue, shared memory 3가지로 구현하고 성능을 비교합니다.
+여러 클라이언트가 하나의 캔버스에 동시에 그리고, 캔버스의 일부나 전체를 받아 가는 서버다. 같은 응용을 pipe, message queue, shared memory 3버전으로 구현해, 작은 그리기 명령과 큰 화면 데이터가 섞인 통신에서 어떤 IPC가 언제 유리한지 측정으로 비교한다. 2026년 2학기 UNIX시스템프로그래밍 설계과제이며 11월 30일(월)에 제출한다.
 
-- 제출: 11월 30일(월), e-class
-- 처음 보는 팀원은 [팀 프로젝트 안내서](https://claude.ai/artifact/9rcWLcBnxL2cK6A4RLx5Lc)부터 읽으세요. 쉬운 말로 쓴 전체 설명입니다.
+처음 보는 팀원은 쉬운 말로 쓴 [팀 프로젝트 안내서](https://claude.ai/artifact/9rcWLcBnxL2cK6A4RLx5Lc)부터 읽는다.
 
-## 현재 상태
+프로젝트 파일은 다음과 같이 배치한다. 파일별 책임은 [구현 방향](docs/tech-specs/README.md#구현-방향)을 참고한다.
 
-뼈대만 있습니다. 헤더 초안과 Makefile, 문서 틀이 들어 있고 구현 코드는 아직 없습니다.
-
-| 단계 | 목표일 | 상태 |
-| --- | --- | --- |
-| transport.h, proto.h 확정 | 11/13 | 초안 |
-| 1단계 기초 벤치마크와 측정 | 11/13 | 시작 전 |
-| 워크로드 명세와 예측 커밋 | 11/16 | 시작 전 |
-| 3버전 구현과 체크섬 검증 | 11/22 | 시작 전 |
-| 응용 측정, 원인 분석, 설계 개선 | 11/26 | 시작 전 |
-| 보고서, 발표자료, 동영상 | 11/30 | 시작 전 |
-
-## 폴더
-
-```
-include/          proto.h (메시지 형식), transport.h (전송 계층 인터페이스)
-src/transport/    transport_pipe.c, transport_mq.c, transport_shm.c  ← 각자 1개
-src/common/       canvas.c, server.c, client.c, verify.c, util.c     ← 공통
-src/bench/        bench.c (1단계 echo 벤치마크)
-scripts/          실험 자동화, 그래프
-results/          측정 원자료 CSV (제출물이므로 커밋)
-docs/             design.md, prediction.md, ai-log.md, worklog.csv
-readme.txt        제출용 readme
+```text
+canvas/
+├── AGENTS.md         # 작업 지침
+├── CONTRIBUTING.md   # 커밋·이슈·PR 형식
+├── Makefile
+├── readme.txt        # 제출용 readme
+├── include/          # proto.h, transport.h
+├── src/
+│   ├── transport/    # IPC별 전송 계층 (pipe, mq, shm)
+│   ├── common/       # 캔버스, 서버, 클라이언트, 검증기
+│   └── bench/        # 1단계 echo 벤치마크
+├── scripts/          # 검증·측정 스크립트
+├── results/          # 측정 원자료 CSV
+└── docs/
+    ├── func-specs/   # 요구사항
+    ├── tech-specs/   # 구현 계획, 설계 명세, 측정 방법
+    ├── test-specs/   # 테스트 명세
+    └── …             # 과제 정리, 발표·제출 준비, 기록
 ```
 
-## 빌드
+## 기술 스택
 
-Linux, gcc, make가 필요합니다.
+C(gnu11), gcc, GNU make, POSIX 스레드를 쓴다. IPC는 FIFO, System V message queue, System V shared memory와 semaphore다. 외부 라이브러리는 쓰지 않는다. 세부 제약은 [요구사항](docs/func-specs/README.md#실행-환경과-제약)을 참고한다.
+
+## 시작하기
+
+Linux에서 gcc와 make만 있으면 된다.
 
 ```bash
-make            # 전체 (소스가 있는 것만 빌드)
-make bench      # 1단계 벤치마크
-make app        # 2단계 응용
-make pipe       # pipe 버전만 (mq, shm 도 같음)
-make check      # 헤더 검사 + 지금 빌드 가능한 대상 보기
-make ipcclean   # 비정상 종료로 남은 IPC 자원 삭제
-make dist       # 제출용 tar
+git clone https://github.com/unix-ipc-canvas/canvas.git
+cd canvas
+git config commit.template .gitmessage   # 커밋 형식 안내 (처음 한 번)
+make
 ```
 
-팀 번호는 2입니다 (`Makefile`의 `TEAM_NO`). System V key는 60xxy 규칙에 따라 60020 ~ 60029를 씁니다.
+| 명령 | 동작 |
+| --- | --- |
+| `make` | 전체 빌드. 소스가 있는 것만 빌드한다 |
+| `make bench` | 1단계 벤치마크 3종 |
+| `make app` | 2단계 응용(서버, 클라이언트) 3종 |
+| `make pipe` / `make mq` / `make shm` | 그 IPC 버전만 |
+| `make check` | 헤더 검사와 지금 빌드 가능한 대상 보기 |
+| `make ipcclean` | 비정상 종료로 남은 IPC 자원과 FIFO 삭제 |
+| `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
-## 작업 규칙
+지금은 헤더 초안, Makefile, 검증 스크립트, 문서만 있고 구현 코드가 없다. `make`는 통과하지만 실행 파일을 만들지 않는다.
 
-1. **맡은 파일만 고칩니다.** `include/`의 두 헤더는 확정 후 세 사람이 합의해야 바꿉니다.
-2. **main에 바로 푸시하지 않습니다.** 브랜치(`pipe`, `mq`, `shm`, `server`, `client`, `bench` 등)에서 작업하고 PR로 합칩니다. 합치기 전에 `make`가 경고 없이 통과해야 합니다.
-3. **설계 선택은 실행 옵션으로 만듭니다.** 원인 분석 실험은 옵션 하나만 바꿔 다시 돌리는 방식으로 합니다. 옵션 목록은 `docs/design.md`.
-4. **측정은 측정용 컴퓨터 1대에서만 합니다.** 다른 컴퓨터에서 잰 숫자는 보고서에 쓰지 않습니다.
-5. **예측은 구현 전에 커밋합니다.** `docs/prediction.md`를 채워 커밋한 뒤에 `server.c`, `client.c`를 시작합니다.
+## 사용 방법
 
-커밋, 브랜치, 이슈, PR 제목 형식은 [CONTRIBUTING.md](CONTRIBUTING.md)를 따릅니다. 예: `feat(pipe): FIFO 요청 채널 구현`
+구현되면 `bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 옵션의 초안은 [실행 옵션](docs/tech-specs/01-design.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
 
-## 매번 적는 기록 3가지
+## 테스트
 
-| 파일 | 언제 | 무엇을 |
-| --- | --- | --- |
-| `docs/worklog.csv` | 작업할 때마다 | 날짜, 이름, 한 일, 시간. 보고서에 투입 시간을 표시해야 합니다 |
-| `docs/ai-log.md` | AI를 쓸 때, AI가 틀린 걸 발견했을 때 | 프롬프트 요약, 틀린 내용, 확인 방법. 틀린 사례가 최소 2개 필요합니다 |
-| `docs/prediction.md` | 11/16까지 한 번 | 워크로드 명세와 예측. 커밋 후에는 덧붙이기만 합니다 |
+```bash
+make test
+```
 
-## 팀
+항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/test-specs/README.md)를 따른다. SKIP은 검증 완료가 아니다.
 
-| 이름 | 학번 | IPC | 공통 담당 |
-| --- | --- | --- | --- |
-| | | pipe | |
-| | | message queue | |
-| | | shared memory | |
+## 관련 문서
 
-측정용 컴퓨터: (CPU, 코어 수, 메모리, 배포판과 커널, gcc 버전, 가상화 여부를 여기에 적기)
+기능 명세·요구사항은 `docs/func-specs/`, 기술 명세·구현 계획은 `docs/tech-specs/`, 테스트 명세는 `docs/test-specs/`에서 관리한다.
+
+- [작업 지침](AGENTS.md): 읽는 순서, 문서별 역할, 코드·측정·기록 규칙
+- [커밋·이슈·PR 작성 규칙](CONTRIBUTING.md): 제목 형식, 브랜치, 템플릿
+- [과제 핵심 정리](docs/assignment-summary.md): 과제 요건, 제출물, 배점
+- [요구사항](docs/func-specs/README.md): 범위, 기능, 제약, 완료 기준
+- [구현 계획](docs/tech-specs/README.md): 구조, 파일 책임, 담당, 일정, 미결정
+- [설계 명세](docs/tech-specs/01-design.md): 채널, 스레드, 동기화, 실행 옵션
+- [측정 방법](docs/tech-specs/02-measurement.md): 타임스탬프, 통계, 원자료 형식
+- [테스트 명세](docs/test-specs/README.md): 검증 항목과 판정 기준
+- [발표·제출 준비](docs/presentation.md): 보고서 절별 출처, 발표자료 구성, 데모 시나리오
+- [성능 예측](docs/prediction.md): 워크로드 명세와 예측. 구현 전에 커밋한다
+- [AI 활용 기록](docs/ai-log.md): AI 사용 내용과 AI가 틀린 사례
+- [작업 시간](docs/worklog.csv): 날짜, 이름, 한 일, 시간

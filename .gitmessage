@@ -1,10 +1,11 @@
 
-# <타입>(<범위>): <한 줄 요약>
+# <타입>: <한 줄 요약>
 #
 # 타입: feat fix perf refactor test exp docs build chore
-# 범위: pipe mq shm server client bench proto scripts (생략 가능)
-# 예:   feat(pipe): FIFO 요청 채널 구현
+# 예:   feat: FIFO 요청 채널 구현
+#       fix(mq): 종료 시 큐가 남는 문제 수정   (범위는 선택)
 #
 # 본문(선택): 한 줄 띄우고 "왜" 바꿨는지
 #
-# 이슈 연결(선택): Closes #번호 / Refs #번호
+# 이슈 연결(선택): Fixes #번호 / Refs #번호
+# 자세한 규칙: CONTRIBUTING.md
