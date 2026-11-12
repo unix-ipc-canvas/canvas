@@ -2,7 +2,7 @@
 
 [문서 안내](../../README.md#관련-문서)
 
-[요구사항](../func-specs/README.md)을 구현하는 구조와 순서를 정한다. 세부 설계는 [설계 명세](02-design.md), 측정은 [측정 방법](03-measurement.md)에 둔다. 완료 여부를 기록하는 별도 현황 문서는 쓰지 않는다. 진행 상황은 GitHub 이슈로 본다.
+[요구사항](../func-specs/README.md)을 구현하는 구조와 순서를 정한다. 세부 설계는 [설계 명세](02-design.md), 측정은 [측정 방법](03-measurement.md)에 둔다. 완료 여부를 기록하는 별도 현황 문서는 쓰지 않는다. 진행 상황은 GitHub의 [이슈](https://github.com/unix-ipc-canvas/canvas/issues)와 [마일스톤](https://github.com/unix-ipc-canvas/canvas/milestones)으로 본다.
 
 ## 구현 방향
 
@@ -51,7 +51,28 @@ IPC는 한 사람이 하나씩 맡고, 공통 부분은 셋으로 나눈다. 1�
 
 ## 단계별 계획
 
-예측(T3)을 커밋하기 전에는 T4의 `server.c`, `client.c`를 시작하지 않는다.
+> [!IMPORTANT]
+> 예측(T3)을 커밋하기 전에는 T4의 `server.c`, `client.c`를 시작하지 않는다. `make test`의 T-00이 이를 검사한다.
+
+```mermaid
+gantt
+    dateFormat YYYY-MM-DD
+    axisFormat %m/%d
+    tickInterval 1day
+    section 측정 준비
+    T1 헤더 확정·전송 계층 기본   :t1, 2026-11-10, 2026-11-14
+    T2 1단계 벤치마크와 측정      :t2, 2026-11-10, 2026-11-14
+    section 예측
+    T3 워크로드 명세와 예측 커밋  :crit, t3, 2026-11-14, 2026-11-17
+    section 구현
+    T4 3버전 구현과 체크섬 검증   :t4, 2026-11-17, 2026-11-23
+    section 분석
+    T5 응용 측정과 원인 확인      :t5, 2026-11-23, 2026-11-25
+    T6 설계 개선과 전후 측정      :t6, 2026-11-25, 2026-11-27
+    section 제출
+    T7 보고서·발표자료·동영상     :t7, 2026-11-27, 2026-12-01
+    최종 제출                     :milestone, 2026-11-30, 0d
+```
 
 | 단계 | 산출물 | 기한 |
 | --- | --- | --- |

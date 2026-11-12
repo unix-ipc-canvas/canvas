@@ -2,6 +2,11 @@
 
 UNIX 시스템 프로그래밍 2팀
 
+![C](https://img.shields.io/badge/C-gnu11-A8B9CC?style=flat-square&logo=c&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-POSIX-FCC624?style=flat-square&logo=linux&logoColor=black)
+![GNU Make](https://img.shields.io/badge/build-GNU%20Make-A42E2B?style=flat-square&logo=gnu&logoColor=white)
+![IPC](https://img.shields.io/badge/IPC-pipe%20%C2%B7%20message%20queue%20%C2%B7%20shared%20memory-2563EB?style=flat-square)
+
 여러 클라이언트가 하나의 캔버스에 동시에 그리고, 캔버스의 일부나 전체를 받아 가는 서버다. 같은 응용을 pipe, message queue, shared memory 3버전으로 구현해, 작은 그리기 명령과 큰 화면 데이터가 섞인 통신에서 어떤 IPC가 언제 유리한지 측정으로 비교한다. 2026년 2학기 UNIX시스템프로그래밍 설계과제이며 11월 30일(월)에 제출한다.
 
 처음 보는 팀원은 쉬운 말로 쓴 [팀 프로젝트 안내서](https://claude.ai/artifact/9rcWLcBnxL2cK6A4RLx5Lc)부터 읽는다.
@@ -55,7 +60,8 @@ make
 | `make ipcclean` | 비정상 종료로 남은 IPC 자원과 FIFO 삭제 |
 | `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
-지금은 헤더 초안, Makefile, 검증 스크립트, 문서만 있고 구현 코드가 없다. `make`는 통과하지만 실행 파일을 만들지 않는다.
+> [!NOTE]
+> 지금은 헤더 초안, Makefile, 검증 스크립트, 문서만 있고 구현 코드가 없다. `make`는 통과하지만 실행 파일을 만들지 않는다.
 
 ## 사용 방법
 
@@ -67,7 +73,7 @@ make
 make test
 ```
 
-항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/test-specs/README.md)를 따른다. SKIP은 검증 완료가 아니다.
+문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/test-specs/README.md)를 따른다. SKIP은 검증 완료가 아니다.
 
 ## 관련 문서
 

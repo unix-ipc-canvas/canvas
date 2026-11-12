@@ -4,7 +4,8 @@
 
 1단계 벤치마크와 2단계 응용을 같은 방법으로 잰다. 과제가 요구하는 조건의 원본은 [측정 방법 필수 요건](../assignment/README.md#측정-방법-필수-요건)이고, 이 문서는 우리가 그것을 어떻게 지키는지 정한다. 보고서 2.2절과 6.2절은 이 문서에서 옮긴다.
 
-상태: 초안. 측정 담당이 1단계를 돌려 보며 확정한다.
+> [!NOTE]
+> 초안이다. 측정 담당이 1단계를 돌려 보며 확정한다.
 
 ## 원칙
 
@@ -27,6 +28,23 @@ systemd-detect-virt        # none 이면 네이티브
 ## 타임스탬프 위치
 
 시각은 모두 `clock_gettime(CLOCK_MONOTONIC, ...)`으로 잰다. 같은 컴퓨터의 프로세스는 같은 시계를 쓰므로 클라이언트와 서버의 시각을 직접 뺄 수 있다.
+
+```mermaid
+sequenceDiagram
+    participant CS as 클라이언트 송신
+    participant SR as 서버 수신
+    participant W as 서버 워커
+    participant CR as 클라이언트 수신
+    Note over CS: t0
+    CS->>SR: 요청 (요청 채널)
+    Note over SR: t_recv
+    SR->>W: 작업 큐
+    Note over W: t_deq
+    Note over W: 락 획득 뒤 t_lock
+    Note over W: 처리 뒤 t_send
+    W->>CR: 응답 (응답 채널)
+    Note over CR: t5
+```
 
 | 시각 | 찍는 곳 | 이유 |
 | --- | --- | --- |
