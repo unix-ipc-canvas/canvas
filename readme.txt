@@ -12,6 +12,7 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
    make bench      1단계 벤치마크만
    make app        2단계 응용만
    make pipe       pipe 버전만 (mq, shm 도 같음)
+   make test       검증 스크립트 실행 (PASS / FAIL / SKIP 출력)
 
 3. 실행
    (구현 후 작성: 서버 실행, 클라이언트 2개 이상 실행, 종료 방법)

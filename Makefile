@@ -5,6 +5,7 @@
 #   make app        2단계 응용 (서버, 클라이언트) 3종
 #   make pipe       pipe 버전만   (mq, shm 도 같음)
 #   make check      헤더 문법 검사 + 빌드 가능한 대상 출력
+#   make test       검증 스크립트 실행 (scripts/verify.sh)
 #   make ipcclean   남은 System V 자원과 FIFO 강제 삭제
 #   make dist       제출용 osproject_<팀번호>.tar 만들기
 #   make clean
@@ -14,7 +15,7 @@ TEAM_NO ?= 2
 
 CC      := gcc
 CFLAGS  ?= -O2 -g -Wall -Wextra -std=gnu11
-CFLAGS  += -pthread -Iinclude -DTEAM_NO=$(TEAM_NO)
+CFLAGS  += -pthread -Iinclude -DTEAM_NO=$(TEAM_NO) $(EXTRA_CFLAGS)
 LDLIBS  += -pthread
 
 IPCS := pipe mq shm
@@ -33,7 +34,7 @@ APP    := $(if $(wildcard src/common/server.c),$(HAVE:%=$(BIN)/server_%)) \
           $(if $(wildcard src/common/client.c),$(HAVE:%=$(BIN)/client_%))
 VERIFY := $(if $(wildcard src/common/verify.c),$(BIN)/verify)
 
-.PHONY: all bench app check clean ipcclean dist
+.PHONY: all bench app check test clean ipcclean dist
 all: check bench app $(VERIFY)
 bench: $(BENCH)
 app: $(APP)
@@ -69,6 +70,9 @@ check:
 	@echo "헤더 검사 통과 (TEAM_NO=$(TEAM_NO))"
 	@echo "전송 계층 구현: $(if $(strip $(HAVE)),$(strip $(HAVE)),아직 없음)"
 	@echo "빌드 대상: $(if $(strip $(BENCH) $(APP) $(VERIFY)),$(strip $(BENCH) $(APP) $(VERIFY)),아직 없음)"
+
+test:
+	@./scripts/verify.sh
 
 # 비정상 종료로 남은 자원 치우기. 정상 종료 때는 프로그램이 직접 지워야 한다.
 ipcclean:
