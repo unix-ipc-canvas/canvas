@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: 이슈·PR 작성 규칙
-    url: https://github.com/unix-ipc-canvas/canvas/blob/main/docs/collaboration.md
+    url: https://github.com/unix-ipc-canvas/canvas/blob/main/docs/CONTRIBUTING.md
     about: 제목 형식, 라벨, 브랜치와 커밋 규칙
   - name: 요구사항과 구현 계획
     url: https://github.com/unix-ipc-canvas/canvas/blob/main/README.md#관련-문서

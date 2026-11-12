@@ -15,12 +15,13 @@
 | 위치 | 담는 것 |
 | --- | --- |
 | `docs/assignment/` | 과제 원문 3개와 [과제 핵심 정리](../assignment/README.md). 원문 파일은 수정하지 않는다 |
-| `docs/func-specs/` | 요구사항(이 문서) |
-| `docs/tech-specs/` | [구현 계획](../tech-specs/01-plan.md), [설계 명세](../tech-specs/02-design.md), [측정 방법](../tech-specs/03-measurement.md) |
-| `docs/test-specs/` | [테스트 명세](../test-specs/README.md) |
-| `docs/presentation/` | [최종보고서·제출 준비 기준](../presentation/final-report.md), [최종 발표 준비 기준](../presentation/final-presentation.md) |
+| `docs/requirements/` | 요구사항(이 문서) |
+| `docs/design/` | [설계 명세](../design/README.md), [구현 계획](../design/plan.md) |
+| `docs/measurement/` | [측정 방법](../measurement/README.md) |
+| `docs/verification/` | [테스트 명세](../verification/README.md) |
+| `docs/submission/` | [최종보고서·제출 준비 기준](../submission/report.md), [최종 발표 준비 기준](../submission/presentation.md) |
 | `docs/records/` | 덧붙이기만 하는 기록: [성능 예측](../records/prediction.md), [AI 활용 기록](../records/ai-log.md), [작업 시간](../records/worklog.csv), AI 대화 기록(`ai-chats/`) |
-| `docs/collaboration.md` | [이슈·PR 작성 규칙](../collaboration.md) |
+| `docs/CONTRIBUTING.md` | [이슈·PR 작성 규칙](../CONTRIBUTING.md) |
 
 - 같은 내용은 담당 문서 한 곳에만 쓰고 나머지는 링크한다. 실행 안내는 루트 `README.md`, 작업 원칙은 `AGENTS.md`가 담당한다.
 - 새 문서는 맞는 폴더에 두고 [README의 관련 문서](../../README.md#관련-문서)에 등록한다.
@@ -30,7 +31,7 @@
 
 - 포함: 사각형 그리기, 영역 조회, 통계 조회, 1단계 echo 벤치마크, 3가지 IPC 버전, 정답 검증기.
 - 제외: 네트워크 통신, GUI와 실시간 화면 표시, 선·글자 그리기, 색상(1바이트 회색조만), 편집 충돌 해결, 캔버스 영속 저장(종료 시 1회 저장만).
-- 미확정: **뷰어 방송**(서버가 주기적으로 화면을 보내는 1:N 통신). 대기 이유는 팀 결정 전이기 때문이다. 11월 13일까지 넣기로 정하면 이 문서에 F-11로 추가한 뒤 예측을 쓴다. 정하지 못하면 넣지 않는다.
+- 미확정: **뷰어 방송**(서버가 주기적으로 화면을 보내는 1:N 통신). 대기 이유는 팀 결정 전이기 때문이다. 11월 15일까지 넣기로 정하면 이 문서에 F-11로 추가한 뒤 예측을 쓴다. 정하지 못하면 넣지 않는다.
 
 ### 용어
 
@@ -96,11 +97,11 @@
 - 측정 구간 안에서는 화면에 출력하지 않는다. 통계와 체크섬은 실행이 끝난 뒤 stdout에 쓴다.
 - 안내와 오류는 stderr에 한 줄로 쓰고, 실패하면 종료 코드 1로 끝난다.
 - 서버를 찾지 못한 클라이언트, 이미 떠 있는 서버 위에 또 띄운 서버는 이유를 알리고 끝난다. 남의 자원을 지우지 않는다.
-- CSV의 열은 [측정 방법](../tech-specs/03-measurement.md#원자료-형식)을 따른다.
+- CSV의 열은 [측정 방법](../measurement/README.md#원자료-형식)을 따른다.
 
 ## 완료 기준
 
-[테스트 명세](../test-specs/README.md)의 항목으로 확인한다. 아래는 수용 조건이며 검증 완료 기록이 아니다.
+[테스트 명세](../verification/README.md)의 항목으로 확인한다. 아래는 수용 조건이며 검증 완료 기록이 아니다.
 
 1. `make`가 경고 없이 통과하고, `make pipe`, `make mq`, `make shm`, `make bench`, `make app`이 각각 동작한다.
 2. 세 버전 모두 클라이언트 2개 이상 동시 실행에서 체크섬이 정답과 일치한다.

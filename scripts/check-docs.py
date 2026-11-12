@@ -53,8 +53,8 @@ for f in files:
             errors.append(f'{f}: 없는 제목을 가리킨다 -> {url}')
 
 # 2. 요구사항 -> 테스트 명세
-REQ = 'docs/func-specs/README.md'
-TEST = 'docs/test-specs/README.md'
+REQ = 'docs/requirements/README.md'
+TEST = 'docs/verification/README.md'
 req_ids = re.findall(r'^\| ([FCN]-\d+) \|', read(REQ), flags=re.M)
 test_text = read(TEST)
 mentioned = set(re.findall(r'\b([FCN]-\d+)\b', test_text))

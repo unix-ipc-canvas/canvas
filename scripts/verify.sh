@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 검증 스크립트. 항목과 판정 기준의 원본은 docs/test-specs/README.md 다.
+# 검증 스크립트. 항목과 판정 기준의 원본은 docs/verification/README.md 다.
 # 실행 파일이 필요한 항목은 구현 전까지 SKIP 으로 남는다. SKIP 은 검증 완료가 아니다.
 set -u
 cd "$(dirname "$0")/.."

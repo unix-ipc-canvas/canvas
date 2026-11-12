@@ -4,28 +4,28 @@
 
 ## 읽는 순서와 문서 역할
 
-작업 전 [요구사항](docs/func-specs/README.md) → [구현 계획](docs/tech-specs/01-plan.md) → [설계 명세](docs/tech-specs/02-design.md) 순으로 읽는다. 충돌하면 요구사항을 우선한다.
+작업 전 [요구사항](docs/requirements/README.md) → [설계 명세](docs/design/README.md) → [구현 계획](docs/design/plan.md) 순으로 읽는다. 충돌하면 요구사항을 우선한다.
 
 | 문서 | 담당 내용 |
 | --- | --- |
 | `docs/assignment/` | 과제 원문 3개와 핵심 정리(조건, 제출물, 배점). 정리와 원문이 다르면 원문이 우선이다 |
-| `docs/func-specs/README.md` | 우리 응용의 범위·용어·요구사항·완료 기준, 문서 배치 |
-| `docs/tech-specs/01-plan.md` | 구조, 파일 책임, 담당, 단계별 계획, 미결정 |
-| `docs/tech-specs/02-design.md` | 채널, 스레드, 동기화, 실행 옵션, 종료 |
-| `docs/tech-specs/03-measurement.md` | 타임스탬프 위치, 통계, 원자료 형식 |
-| `docs/test-specs/README.md` | 검증 범위·방법·판정 기준 |
-| `docs/presentation/` | 보고서 절별 출처와 제출 점검, 발표자료 구성과 데모 시나리오 |
+| `docs/requirements/README.md` | 우리 응용의 범위·용어·요구사항·완료 기준, 문서 배치 |
+| `docs/design/plan.md` | 구조, 파일 책임, 담당, 단계별 계획, 미결정 |
+| `docs/design/README.md` | 채널, 스레드, 동기화, 실행 옵션, 종료 |
+| `docs/measurement/README.md` | 타임스탬프 위치, 통계, 원자료 형식 |
+| `docs/verification/README.md` | 검증 범위·방법·판정 기준 |
+| `docs/submission/` | 보고서 절별 출처와 제출 점검, 발표자료 구성과 데모 시나리오 |
 | `docs/records/` | 성능 예측, AI 활용 기록, 작업 시간. 덧붙이기만 한다 |
-| `docs/collaboration.md` | 커밋·브랜치·이슈·PR 형식 |
+| `docs/CONTRIBUTING.md` | 커밋·브랜치·이슈·PR 형식 |
 | `README.md` | 빌드·실행·테스트 명령, 문서 목록 |
 
 ## 변경 원칙
 
 - 요구사항·계획·설계는 구현 전에 갱신한다. 문서와 어긋나는 변경은 코드보다 담당 문서를 먼저 고친다.
 - 문서는 짧게 쓰고, 같은 내용은 담당 문서 한 곳에만 둔 뒤 나머지는 링크한다. 문서를 옮기거나 제목을 바꾸면 참조 링크와 앵커도 함께 고친다.
-- README 순서는 소개 → 기술 스택 → 시작하기 → 사용 방법 → 테스트 → 관련 문서다. 새 문서는 [문서 배치](docs/func-specs/README.md#문서-관리)에 맞는 폴더에 두고 [관련 문서](README.md#관련-문서)에 등록한다. 과제 원문 파일은 수정하지 않는다.
+- README 순서는 소개 → 기술 스택 → 시작하기 → 사용 방법 → 테스트 → 관련 문서다. 새 문서는 [문서 배치](docs/requirements/README.md#문서-관리)에 맞는 폴더에 두고 [관련 문서](README.md#관련-문서)에 등록한다. 과제 원문 파일은 수정하지 않는다.
 - 완료 이력은 문서에 쌓지 않는다. 미확정 항목에는 대기 이유와 재개 조건만 남긴다. 미확정 값을 추정해 채우지 않는다.
-- 테스트 범위·방법·판정 기준은 [테스트 명세](docs/test-specs/README.md)에서 관리한다. 완료 기준은 요구사항, 실행 명령은 루트 README에 둔다.
+- 테스트 범위·방법·판정 기준은 [테스트 명세](docs/verification/README.md)에서 관리한다. 완료 기준은 요구사항, 실행 명령은 루트 README에 둔다.
 
 ## 코드 규칙
 
@@ -46,4 +46,4 @@
 
 ## 커밋·이슈·PR
 
-형식은 [이슈·PR 작성 규칙](docs/collaboration.md)을 따른다. 커밋 메시지, PR, 이슈에 AI 도구의 서명(`Co-Authored-By`, 생성 도구 표시, 세션 링크)을 넣지 않는다. AI 사용 사실은 `docs/records/ai-log.md`에만 기록한다.
+형식은 [이슈·PR 작성 규칙](docs/CONTRIBUTING.md)을 따른다. 커밋 메시지, PR, 이슈에 AI 도구의 서명(`Co-Authored-By`, 생성 도구 표시, 세션 링크)을 넣지 않는다. AI 사용 사실은 `docs/records/ai-log.md`에만 기록한다.
