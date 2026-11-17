@@ -29,7 +29,7 @@
 
 ## 코드 규칙
 
-- `include/proto.h`, `include/transport.h`는 세 사람이 합의한 PR로만 바꾼다.
+- `include/proto.h`, `include/transport.h`는 owner가 승인한 PR로만 바꾼다([PR 규칙](docs/CONTRIBUTING.md#pr)). 그 밖의 헤더는 그 모듈의 담당이 바꾼다.
 - `src/common/`, `src/bench/`에는 IPC 고유 호출(`msgsnd`, `shmat`, `mkfifo` 등)을 넣지 않는다. `transport.h`의 함수만 부른다.
 - 락 방식 같은 설계 선택은 실행 옵션으로 만든다. 실험을 위해 코드를 고쳐 다시 빌드하는 방식을 쓰지 않는다.
 - 만든 IPC 자원은 모든 종료 경로에서 지운다. key는 `IPC_KEY(y)`로만 만든다.
