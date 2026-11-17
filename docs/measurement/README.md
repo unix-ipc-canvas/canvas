@@ -111,7 +111,7 @@ sequenceDiagram
 | 자원 사용량 | client 줄은 모든 클라이언트의 합(VmRSS·VmHWM은 가장 큰 값), server 줄은 서버 하나. 둘 다 측정 구간만 | |
 | clock_gettime 비용 | 100만 번 연달아 불러 한 번의 비용을 잰다 (`bench -K`, `results/bench_clock.csv`) | 작은 메시지의 지연에 섞이는 측정 비용을 보고서에 함께 쓴다 |
 
-`scripts/bench.sh` 가 위 조합을 모두 돌린다. 커밋하지 않은 코드 변경이 있으면 멈춘다. 그래프와 요약표는 `scripts/plot-bench.py` 가 `docs/assets/bench/` 에 만든다.
+`scripts/bench.sh` 가 위 조합을 모두 돌린다. 커밋하지 않은 코드 변경이 있으면 멈춘다. 그래프와 요약표는 `scripts/plot-bench.py` 가 `docs/assets/bench/` 에 만든다. 측정 기록과 해석은 [1단계 측정 결과](stage1.md)에 있다.
 
 ## 2단계 실험
 

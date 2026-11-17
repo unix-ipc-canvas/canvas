@@ -24,9 +24,9 @@
 | 표지 | 팀명, 팀 번호, 팀원(학번, 성명, 담당 IPC) | [역할 분담](../../README.md#역할-분담) | |
 | 1.1 | 문제 정의, IPC 선택이 중요한 이유 | [요구사항 개요](../requirements/README.md#개요). 리눅스 화면 시스템(X11의 공유 메모리 확장, Wayland의 공유 메모리 버퍼) 사례는 출처를 직접 찾아 확인하고 인용한다 | |
 | 1.2 | 기능·비기능 요구사항, 제약 조건 충족 방법 | [요구사항](../requirements/README.md) | |
-| 2.1 | 측정 환경 | [측정 환경 기록](../measurement/README.md#측정-환경-기록)의 명령 출력 | |
+| 2.1 | 측정 환경 | [측정 환경 기록](../measurement/README.md#측정-환경-기록)의 명령 출력, `results/bench_env.txt`, [1단계 측정 기록](../measurement/stage1.md#측정-기록) | |
 | 2.2 | 벤치마크 설계 | [측정 방법](../measurement/README.md) | |
-| 2.3, 2.4 | 1단계 결과와 해석 | `results/bench_*.csv`와 그래프 | |
+| 2.3, 2.4 | 1단계 결과와 해석 | [1단계 측정 결과](../measurement/stage1.md), [1단계 측정 요약](../assets/bench/summary.md)과 그래프(`results/bench_*.csv`에서 `scripts/plot-bench.py`가 만든다) | |
 | 3 | 워크로드 명세와 예측 | [성능 예측](../records/prediction.md). 작성 당시 내용 그대로, 수정 기록은 구분해서 | |
 | 4 | 설계도, 스레드, 공유 자원과 동기화 | [설계 명세](../design/README.md) | |
 | 5.1 | 소스 주요 부분 | `src/transport/`의 생성·송수신·해제 코드, 락 코드 | |
