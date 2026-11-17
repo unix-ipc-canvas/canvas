@@ -147,11 +147,15 @@ for ipc in IPCS:
         continue
     ax.plot(xs, [med(lat[(ipc, s, 1)], 'lat_p50_us') for s in xs], marker=MARK[ipc], color=COLOR[ipc],
             label=f'{LABEL[ipc]} p50')
+    band = [core([num(r['lat_p50_us']) for r in lat[(ipc, s, 1)]]) for s in xs]
+    ax.fill_between(xs, [b[0] for b in band], [b[1] for b in band], color=COLOR[ipc], alpha=0.12, lw=0)
     ax.plot(xs, [med(lat[(ipc, s, 1)], 'lat_p99_us') for s in xs], ls='--', marker=MARK[ipc], mfc='none',
             color=COLOR[ipc], alpha=0.7, label=f'{LABEL[ipc]} p99')
 ax.set_yscale('log')
 ax.set_ylabel('Round-trip latency (µs, log)')
 ax.set_title('Round-trip latency vs message size (1 client, 1 in flight)')
+ax.text(0.99, 0.02, 'shaded: p50 range over runs, best and worst run dropped', transform=ax.transAxes,
+        ha='right', va='bottom', fontsize=7, color='0.35')
 size_axis(ax)
 ax.legend(ncol=2, fontsize=8)
 save(fig, 'latency_size.png')
@@ -328,6 +332,37 @@ for s in sizes:
 w('\n바뀌는 곳:\n')
 w('\n'.join(flips) if flips else '- 바뀌지 않음')
 
+# 메시지당 자발적 컨텍스트 스위치 (cost_size.png 의 왼쪽 그림을 표로)
+w('\n## 메시지당 자발적 컨텍스트 스위치 (클라이언트 1, 동시 요청 1)\n')
+w('클라이언트 프로세스와 서버 프로세스의 `nvcsw` 를 더해 잰 메시지 수로 나눈 값이다(실행별 값의 중앙값). '
+  '왕복 한 번에 막혀서 잠든 횟수로 볼 수 있다.\n')
+w('| 크기 | ' + ' | '.join(IPCS) + ' |')
+w('| --- |' + ' ---: |' * len(IPCS))
+for s in sizes:
+    cells = []
+    for ipc in IPCS:
+        c, sv = lat.get((ipc, s, 1)), lat_srv.get((ipc, s, 1))
+        cells.append('-' if not c or not sv else f'{(med(c, "nvcsw") + med(sv, "nvcsw")) / med(c, "n"):.1f}')
+    w(f'| {size_label(s)} | ' + ' | '.join(cells) + ' |')
+
+# 처리량 실행의 긴 꼬리: 최대가 상위 99% 보다 훨씬 큰 조건
+if thr:
+    w(f'\n## 처리량 실행의 긴 꼬리 (동시 요청 {infl})\n')
+    w('칸의 값은 최대 / 상위 99% (둘 다 실행별 값의 중앙값)와, 평균이 상위 99% 보다 큰 실행 수다. '
+      '평균이 상위 99% 보다 크면 1% 도 안 되는 요청이 평균을 끌어올릴 만큼 오래 기다린 것이다.\n')
+    w('| 크기 | 클라이언트 | ' + ' | '.join(IPCS) + ' |')
+    w('| --- | ---: |' + ' ---: |' * len(IPCS))
+    for s in sizes:
+        for c in clients:
+            cells = []
+            for ipc in IPCS:
+                r = thr.get((ipc, s, c))
+                if not r:
+                    cells.append('-')
+                    continue
+                tail = sum(1 for x in r if num(x['lat_mean_us']) > num(x['lat_p99_us']))
+                cells.append(f'{med(r, "lat_max_us") / med(r, "lat_p99_us"):.1f}배 ({tail}/{len(r)})')
+            w(f'| {size_label(s)} | {c} | ' + ' | '.join(cells) + ' |')
 
 w('\n## 그림\n')
 for name, cap in [('latency_size.png', '크기별 왕복 지연'), ('throughput_size.png', '크기별 처리량'),
