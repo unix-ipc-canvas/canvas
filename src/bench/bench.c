@@ -844,14 +844,24 @@ static int run_driver(const cfg_t *cfg)
         uint64_t deadline = now_ns() + (uint64_t)RUN_SEC * 1000000000ull;
         for (;;) {
             reap(ch, cnt);
-            bool all = true;
-            for (unsigned i = 1; i < cnt; i++) all = all && ch[i].done;
+            bool all = true, failed = false;
+            for (unsigned i = 1; i < cnt; i++) {
+                all = all && ch[i].done;
+                failed = failed || (ch[i].done && !child_ok(&ch[i]));
+            }
             if (all) break;
-            if (ch[0].done || now_ns() > deadline) { rc = -1; break; }
+            /* 이 실행은 이미 실패다. 남은 클라이언트가 할당량을 다 채울 때까지 기다리지 않는다 */
+            const char *why = failed ? "클라이언트가 실패로 먼저 끝났다"
+                            : ch[0].done ? "서버가 먼저 끝났다"
+                            : now_ns() > deadline ? "제한 시간 안에 끝나지 않았다" : NULL;
+            if (why) {
+                fprintf(stderr, "bench: %s\n", why);
+                rc = -1;
+                break;
+            }
             struct timespec to = { 1, 0 };
             sigtimedwait(&chld, NULL, &to);
         }
-        if (rc < 0) fprintf(stderr, "bench: 제한 시간 안에 끝나지 않았다\n");
     }
     stop_all(ch, cnt);
 
