@@ -30,11 +30,11 @@
 
 ## 측정 환경 기록
 
-측정용 컴퓨터에서 아래를 실행해 보고서 2.1절 표에 옮긴다. `scripts/bench.sh` 가 측정을 시작할 때 같은 내용과 IPC 한도를 `results/bench_env.txt` 에 남긴다.
+측정용 컴퓨터에서 아래를 실행해 보고서 2.1절 표에 옮긴다. `scripts/bench.sh` 가 측정을 시작할 때 같은 내용과 IPC 한도를 `results/bench_env.txt` 에 남기고, 측정 시작과 끝에 CPU를 쓰는 프로세스(`top`)도 함께 남긴다. 끌 수 없는 프로그램은 거기서 확인한다. 출력은 영어 기준이라 `LC_ALL=C`를 붙인다(한국어 설정에서는 `lscpu`의 항목 이름이 한국어로 나와 아래 `grep`이 빈 결과를 낸다).
 
 ```bash
-lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core'
-free -h | head -2
+LC_ALL=C lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core'
+LC_ALL=C free -h | head -2
 . /etc/os-release && echo "$PRETTY_NAME"; uname -r
 gcc --version | head -1
 systemd-detect-virt        # none 이면 네이티브
