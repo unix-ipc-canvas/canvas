@@ -71,6 +71,48 @@ def spread(runs, col):
     return (max(vals) - min(vals)) / m if m else None
 
 
+def core(vals):
+    """실행별 값에서 가장 좋은 것과 가장 나쁜 것을 하나씩 뺀 범위 (4번 미만이면 전체 범위)"""
+    v = sorted(vals)
+    if len(v) >= 4:
+        v = v[1:-1]
+    return v[0], v[-1]
+
+
+def order_groups(data, key, col, low_better):
+    """순위. data[(ipc,) + key] 의 실행별 값으로 중앙값 순서를 정하고, 앞 묶음과 가운데 범위(core)가
+    겹치면 같은 묶음(≈)에 넣는다. 범위가 겹치는 차이는 실행 사이의 흔들림보다 작아 순위를 매기지 않는다.
+    돌려주는 값: 좋은 쪽부터 묶음 목록 [[ipc, ...], ...]"""
+    vals = {i: [num(r[col]) for r in data[(i,) + key]] for i in RANKED if (i,) + key in data}
+    order = sorted(vals, key=lambda i: statistics.median(vals[i]), reverse=not low_better)
+    groups = []
+    for i in order:
+        if groups:
+            lo, hi = core(vals[i])
+            if low_better:
+                apart = max(core(vals[g])[1] for g in groups[-1]) < lo
+            else:
+                apart = min(core(vals[g])[0] for g in groups[-1]) > hi
+            if not apart:
+                groups[-1].append(i)
+                continue
+        groups.append([i])
+    return groups
+
+
+def order_str(groups, low_better):
+    return (' < ' if low_better else ' > ').join(' ≈ '.join(sorted(g, key=RANKED.index)) for g in groups)
+
+
+def group_rank(groups):
+    rank, out = 1, {}
+    for g in groups:
+        for i in g:
+            out[i] = rank
+        rank += len(g)
+    return out
+
+
 lat = group(load('bench_latency.csv'), 'client')
 lat_srv = group(load('bench_latency.csv'), 'server')
 thr = group(load('bench_throughput.csv'), 'client')
@@ -192,7 +234,9 @@ w = out.append
 w('# 1단계 측정 요약\n')
 w('`scripts/plot-bench.py` 가 `results/bench_*.csv` 에서 만든 파일이다. 손으로 고치지 않는다. '
   '같은 조건을 여러 번 잰 값은 실행마다의 값의 중앙값이다. 지연 단위는 µs, 처리량은 MB/s (1 MB = 10^6 B). '
-  '순위는 pipe, mq, shm 사이에서만 매긴다. upipe(익명 pipe)는 FIFO 와 이름 유무만 다른 대조군이다.\n')
+  '순위는 pipe, mq, shm 사이에서만 매긴다. upipe(익명 pipe)는 FIFO 와 이름 유무만 다른 대조군이다. '
+  '순위를 매길 때는 실행별 값에서 가장 좋은 것과 가장 나쁜 것을 하나씩 뺀 범위(5번이면 가운데 3번)를 보고, '
+  '두 IPC 의 범위가 겹치면 차이가 실행 사이의 흔들림보다 작은 것이므로 ≈ 로 묶어 같은 순위로 둔다.\n')
 
 env = os.path.join(RES, 'bench_env.txt')
 if os.path.exists(env):
@@ -212,15 +256,15 @@ w('| 크기 | IPC | 평균 | 중앙값 | 상위 99% | 최대 | p50 순위 | 실�
 w('| --- | --- | ---: | ---: | ---: | ---: | :---: | ---: |')
 rank_lat = {}
 for s in sizes:
-    p50 = {ipc: med(lat[(ipc, s, 1)], 'lat_p50_us') for ipc in RANKED if (ipc, s, 1) in lat}
-    order = sorted(p50, key=p50.get)
-    rank_lat[s] = order
+    groups = order_groups(lat, (s, 1), 'lat_p50_us', True)
+    rank_lat[s] = order_str(groups, True)
+    ranks = group_rank(groups)
     for ipc in IPCS:
         if (ipc, s, 1) not in lat:
             continue
         r = lat[(ipc, s, 1)]
         sp = spread(r, 'lat_p50_us')
-        rank = order.index(ipc) + 1 if ipc in order else '-'
+        rank = ranks.get(ipc, '-')
         w(f'| {size_label(s)} | {ipc} | {med(r, "lat_mean_us"):.2f} | {med(r, "lat_p50_us"):.2f} | '
           f'{med(r, "lat_p99_us"):.2f} | {med(r, "lat_max_us"):.2f} | {rank} | '
           f'{"-" if sp is None else f"{sp * 100:.0f}%"} |')
@@ -233,9 +277,9 @@ if thr:
     for s in sizes:
         mb = {i: med(thr[(i, s, 1)], 'thr_mb_s') for i in IPCS if (i, s, 1) in thr}
         ms = {i: med(thr[(i, s, 1)], 'thr_msg_s') for i in IPCS if (i, s, 1) in thr}
-        order = sorted((i for i in mb if i in RANKED), key=mb.get, reverse=True)
+        order = order_str(order_groups(thr, (s, 1), 'thr_mb_s', False), False)
         w(f'| {size_label(s)} | ' + ' | '.join(f'{mb[i]:.1f}' if i in mb else '-' for i in IPCS) + ' | '
-          + ' | '.join(f'{ms[i]:.0f}' if i in ms else '-' for i in IPCS) + ' | ' + ' > '.join(order) + ' |')
+          + ' | '.join(f'{ms[i]:.0f}' if i in ms else '-' for i in IPCS) + ' | ' + order + ' |')
 
 
 def client_table(data, col, title, fmt):
@@ -248,9 +292,9 @@ def client_table(data, col, title, fmt):
             if not v:
                 continue
             best_low = col.startswith('lat')
-            order = sorted((i for i in v if i in RANKED), key=v.get, reverse=not best_low)
+            order = order_str(order_groups(data, (s, c), col, best_low), best_low)
             w(f'| {size_label(s)} | {c} | ' + ' | '.join(fmt.format(v[i]) if i in v else '-' for i in IPCS)
-              + ' | ' + (' < ' if best_low else ' > ').join(order) + ' |')
+              + ' | ' + order + ' |')
 
 
 client_table(lat, 'lat_p50_us', '클라이언트 수별 지연 중앙값 (µs, 동시 요청 1)', '{:.2f}')
@@ -273,13 +317,17 @@ if any(k[0] == 'upipe' for k in lat):
           f'{"-" if ta is None else f"{ta:.1f}"} | {"-" if tb is None else f"{tb:.1f}"} |')
 
 w('\n## 순위가 바뀌는 지점 (클라이언트 1, 지연 중앙값)\n')
+w('크기별 순위 (≈ 는 가운데 범위가 겹쳐 구분하지 않은 것):\n')
+w('\n'.join(f'- {size_label(s)}: {rank_lat[s]}' for s in sizes))
 prev = None
 flips = []
 for s in sizes:
     if prev and rank_lat[s] != rank_lat[prev]:
-        flips.append(f'- {size_label(prev)} → {size_label(s)}: {" < ".join(rank_lat[prev])} 에서 {" < ".join(rank_lat[s])} 로')
+        flips.append(f'- {size_label(prev)} → {size_label(s)}: {rank_lat[prev]} 에서 {rank_lat[s]} 로')
     prev = s
+w('\n바뀌는 곳:\n')
 w('\n'.join(flips) if flips else '- 바뀌지 않음')
+
 
 w('\n## 그림\n')
 for name, cap in [('latency_size.png', '크기별 왕복 지연'), ('throughput_size.png', '크기별 처리량'),
