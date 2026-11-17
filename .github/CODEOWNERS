@@ -1,0 +1,4 @@
+# include/ 의 두 헤더를 바꾸는 PR 은 owner 가 승인한 뒤 합친다 (docs/CONTRIBUTING.md 의 PR 절).
+# GitHub 가 이 파일을 보고 그런 PR 에 owner 를 리뷰어로 자동 지정한다. 승인 없이 합치는 것을 막지는 않는다.
+/include/proto.h      @Movinggun-bit
+/include/transport.h  @Movinggun-bit
