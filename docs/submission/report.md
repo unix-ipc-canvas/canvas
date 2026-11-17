@@ -43,12 +43,13 @@
 
 ## 캡처 목록
 
-제출 직전에 한꺼번에 찍으면 빠뜨린다. 해당 단계에서 바로 찍는다.
+제출 직전에 한꺼번에 찍으면 빠뜨린다. 해당 단계에서 바로 찍는다. 캡처는 `docs/assets/captures/`에 둔다.
 
-- [ ] 측정 환경 명령 출력
+- [x] 측정 환경 명령 출력: [측정 환경](../assets/captures/stage1-env.png), [IPC 한도](../assets/captures/stage1-ipc-limits.png)
+- [x] 1단계 측정 실행 결과: [`scripts/bench.sh` 출력의 처음과 끝](../assets/captures/stage1-bench-run.png)
 - [ ] 세 버전 각각의 서버·클라이언트 실행 화면
-- [ ] 실행 중과 종료 뒤의 `ipcs`
-- [ ] `make`와 `make test` 출력
+- [ ] 실행 중과 종료 뒤의 `ipcs`: 1단계 벤치마크로 찍은 [실행 중](../assets/captures/stage1-ipcs-running.png), [측정 뒤](../assets/captures/stage1-ipcs-after.png)가 있다. 응용 데모로 다시 찍는다
+- [ ] `make`와 `make test` 출력: 응용 전(1단계 시점, SKIP 15)의 [make](../assets/captures/stage1-make.png), [make test](../assets/captures/stage1-make-test.png)가 있다. 응용을 넣은 뒤 다시 찍는다
 - [ ] 체크섬 일치와 불일치 장면
 - [ ] 캔버스 이미지
 - [ ] 주요 AI 대화 기록
