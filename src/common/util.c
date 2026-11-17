@@ -115,6 +115,20 @@ static long status_kb(const char *key)
 long vm_rss_kb(void) { return status_kb("VmRSS"); }
 long vm_hwm_kb(void) { return status_kb("VmHWM"); }
 
+/* ---- 오류 문구 ---- */
+
+const char *err_str(int e, char *buf, size_t len)
+{
+#if (_POSIX_C_SOURCE >= 200112L) && !defined(_GNU_SOURCE)
+    /* XSI 판: 성공하면 0 을 돌려주고 buf 를 채운다 */
+    if (strerror_r(e, buf, len) != 0) snprintf(buf, len, "오류 %d", e);
+    return buf;
+#else
+    /* GNU 판: 설명 문자열을 돌려준다 (buf 가 아닐 수 있다) */
+    return strerror_r(e, buf, len);
+#endif
+}
+
 /* ---- 결과 CSV ---- */
 
 void csv_row_init(csv_row_t *r)

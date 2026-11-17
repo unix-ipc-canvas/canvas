@@ -122,8 +122,9 @@ typedef struct {
 
 static void srv_error(srv_t *s, const char *what, int e)
 {
+    char eb[128];
     pthread_mutex_lock(&s->mtx);
-    if (!s->res.err[0]) snprintf(s->res.err, sizeof s->res.err, "서버 %s: %s", what, strerror(e));
+    if (!s->res.err[0]) snprintf(s->res.err, sizeof s->res.err, "서버 %s: %s", what, err_str(e, eb, sizeof eb));
     pthread_mutex_unlock(&s->mtx);
 }
 
@@ -226,7 +227,8 @@ static int run_server(const char *dir, pid_t driver)
         return 1;
     }
     if (tp_server_open() < 0) {
-        snprintf(s.res.err, sizeof s.res.err, "tp_server_open: %s", strerror(errno));
+        char eb[128];
+        snprintf(s.res.err, sizeof s.res.err, "tp_server_open: %s", err_str(errno, eb, sizeof eb));
         write_result(dir, "server", &s.res, NULL, 0);
         return 1;
     }
@@ -281,10 +283,11 @@ typedef struct {
 /* 실패를 기록하고 기다리는 스레드를 모두 깨운다 */
 static void cli_fail(cli_t *c, const char *what, int e)
 {
+    char eb[128];
     pthread_mutex_lock(&c->mtx);
     if (!atomic_load(&c->failed)) {
         snprintf(c->res.err, sizeof c->res.err, "클라이언트 %u %s%s%s", c->id, what,
-                 e ? ": " : "", e ? strerror(e) : "");
+                 e ? ": " : "", e ? err_str(e, eb, sizeof eb) : "");
         atomic_store(&c->failed, true);
     }
     pthread_cond_broadcast(&c->cv);
@@ -443,7 +446,8 @@ static void *cli_stats_main(void *arg)
 
 static int client_fail_early(const char *dir, const char *name, result_t *res, const char *what, int e)
 {
-    snprintf(res->err, sizeof res->err, "%s: %s", what, strerror(e));
+    char eb[128];
+    snprintf(res->err, sizeof res->err, "%s: %s", what, err_str(e, eb, sizeof eb));
     write_result(dir, name, res, NULL, 0);
     return 1;
 }
@@ -728,7 +732,9 @@ static int aggregate(const cfg_t *cfg, const char *dir)
     srow.vmhwm_kb = sr.vmhwm_kb;
 
     if (cfg->out && (csv_append(cfg->out, &row) < 0 || csv_append(cfg->out, &srow) < 0)) {
-        fprintf(stderr, "bench: %s 에 쓰지 못함: %s\n", cfg->out, strerror(errno));
+        char eb[128];
+        fprintf(stderr, "bench: %s 에 쓰지 못함: %s\n", cfg->out,
+                errno == EBADMSG ? "머리글이 지금의 열과 다르다 (열을 바꾸기 전에 만든 파일)" : err_str(errno, eb, sizeof eb));
         rc = -1;
     }
     fprintf(stderr, "%-4s %-10s s=%-7zu c=%u f=%-2u n=%-6" PRIu64 " mean=%.2fus p50=%.2fus p99=%.2fus max=%.2fus"
