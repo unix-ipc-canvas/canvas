@@ -226,6 +226,7 @@ void tp_postfork(void) { }
  * ================================================================ */
 
 static int srv_req_fd = -1;                      /* 요청 FIFO, O_RDWR */
+static int srv_wake_fd = -1;                     /* 요청 FIFO 쓰기 끝, O_NONBLOCK. tp_server_wake 만 쓴다 */
 static int srv_lock_fd = -1;
 static int srv_resp_fd[MAX_CLIENTS];             /* 응답 FIFO 쓰기 끝. 처음 보낼 때 연다 */
 static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
@@ -251,6 +252,10 @@ int tp_server_open(void)
     srv_req_fd = open(rp, O_RDWR);
     if (srv_req_fd < 0) goto fail;
 
+    /* 깨우기 전용 쓰기 끝. 막히지 않게 따로 연다 (O_NONBLOCK 은 열린 파일마다라 srv_req_fd 의 읽기에는 영향이 없다) */
+    srv_wake_fd = open(rp, O_WRONLY | O_NONBLOCK);
+    if (srv_wake_fd < 0) goto fail;
+
     srv_lock_fd = open(lp, O_RDWR | O_CREAT, 0600);
     if (srv_lock_fd < 0) goto fail;
 
@@ -265,6 +270,7 @@ int tp_server_open(void)
 fail:;
     int e = errno;
     if (srv_req_fd >= 0) { close(srv_req_fd); srv_req_fd = -1; }
+    if (srv_wake_fd >= 0) { close(srv_wake_fd); srv_wake_fd = -1; }
     unlink(rp);
     unlink(lp);
     errno = e;
@@ -362,8 +368,13 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
 }
 
 /*
- * 막혀 있는 tp_recv_req 를 깨운다. 요청 FIFO 에 type 0 머리 하나를 쓴다.
- * 큰 요청이 쓰이는 중간에 끼어들지 않도록 송신 잠금을 잡고 쓴다.
+ * 막혀 있는 tp_recv_req 를 깨운다. 요청 FIFO 에 type 0 머리 하나를 막히지 않게 쓴다.
+ * 수신 스레드는 srv_stopping 을 보고 다음 호출에서 끝나므로, 깨우기는 수신 스레드가 빈 FIFO 를 기다리며
+ * 막혀 있을 때만 필요하다. 그때는 FIFO 에 자리가 있어 바로 써진다.
+ * DECISION: 깨우기는 막히지 않게(O_NONBLOCK) 쓰고 송신 잠금도 잡지 않는다. 막히는 write 나 잠금은 서버를 멈춘다:
+ *   수신 스레드가 먼저 끝나 FIFO 가 가득 찬 채로 남거나, 큰 요청을 쓰던 클라이언트가 잠금을 쥔 채 그 FIFO 에서
+ *   막혀 있기 때문이다. 큰 요청 도중에 서버를 SIGINT 로 끝내는 시험에서 40번 중 2번 멈췄다 (잠금을 잡으면 60번 중 55번).
+ *   깨우기가 큰 요청의 중간에 끼어들면 그 요청은 깨진 채 한 번 처리되고, 다음 호출에서 수신 스레드가 끝난다.
  */
 void tp_server_wake(void)
 {
@@ -372,7 +383,8 @@ void tp_server_wake(void)
     msg_hdr_t h;
     memset(&h, 0, sizeof h);
     h.type = WAKE_TYPE;
-    send_on_req(srv_req_fd, srv_lock_fd, &h, NULL);
+    while (write(srv_wake_fd, &h, sizeof h) < 0 && errno == EINTR)
+        ;                                /* EAGAIN = FIFO 가 차 있다 = 수신 스레드가 막혀 있지 않다 */
 }
 
 void tp_server_close(void)
@@ -393,6 +405,7 @@ void tp_server_close(void)
         pthread_mutex_destroy(&srv_resp_mtx[i]);
     }
     close(srv_req_fd);  srv_req_fd = -1;
+    close(srv_wake_fd); srv_wake_fd = -1;
     close(srv_lock_fd); srv_lock_fd = -1;
     srv_opened = 0;
 }

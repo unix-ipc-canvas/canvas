@@ -300,7 +300,13 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
     return rc;
 }
 
-/* 막혀 있는 tp_recv_req 를 깨운다. 서버가 쥔 요청 pipe 의 쓰기 끝으로 type 0 머리 하나를 쓴다 */
+/*
+ * 막혀 있는 tp_recv_req 를 깨운다. 서버가 쥔 요청 pipe 의 쓰기 끝으로 type 0 머리 하나를 쓴다.
+ * DECISION: FIFO 버전처럼 막히지 않게 쓰지 못한다. 익명 pipe 의 쓰기 끝은 클라이언트들과 같은 열린 파일이라
+ *   O_NONBLOCK 을 걸면 클라이언트의 송신까지 바뀐다. 요청 pipe 가 가득 찬 채 수신 스레드가 먼저 끝나면 여기서
+ *   기다릴 수 있지만, 벤치마크는 클라이언트가 모두 끝난(또는 죽은) 뒤에 서버를 끝내므로 생기지 않는다.
+ *   송신 잠금은 잡지 않는다. 큰 요청을 쓰던 클라이언트가 잠금을 쥔 채 막혀 있으면 서버가 멈춘다.
+ */
 void tp_server_wake(void)
 {
     if (!srv_opened) return;
@@ -308,7 +314,9 @@ void tp_server_wake(void)
     msg_hdr_t h;
     memset(&h, 0, sizeof h);
     h.type = WAKE_TYPE;
-    send_on_req(up_req[1], up_lock, &h, NULL);
+    struct iovec iov = { &h, sizeof h };
+    size_t done;
+    writev_full(up_req[1], &iov, 1, &done);
 }
 
 /* 서버의 끝을 모두 닫는다. 응답 pipe 의 쓰기 끝이 닫히므로 클라이언트의 수신은 EOF(ECONNRESET)로 끝난다 */
