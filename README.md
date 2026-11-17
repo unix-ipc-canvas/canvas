@@ -83,11 +83,43 @@ make
 | `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
 > [!NOTE]
-> 지금은 헤더 초안, Makefile, 검증 스크립트, 문서만 있고 구현 코드가 없다. `make`는 통과하지만 실행 파일을 만들지 않는다.
+> 지금은 전송 계층 3개와 1단계 벤치마크가 있다. 서버·클라이언트·검증기는 아직 없어 `make app`은 아무것도 만들지 않는다.
 
 ## 사용 방법
 
-구현되면 `bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 옵션의 초안은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
+`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 서버·클라이언트 옵션의 초안은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
+
+### 1단계 벤치마크
+
+한 번 실행하면 서버 1개와 클라이언트 N개를 띄워 조건 하나를 재고, 결과 한 줄을 화면(stderr)에 낸다. `-o`를 주면 CSV에 두 줄(client, server)을 덧붙인다. 측정 방법은 [1단계 벤치마크](docs/measurement/README.md#1단계-벤치마크)를 따른다.
+
+```bash
+make bench
+./bin/bench_shm -c 4 -s 65536 -n 10000            # 클라이언트 4개, 64KB, 지연 (동시 요청 1)
+./bin/bench_shm -c 4 -s 65536 -n 10000 -f 16      # 동시 요청 16개, 처리량
+./bin/bench_pipe -c 8 -s 1048576 -n 500 -V        # 모든 응답의 내용까지 검사 (시험용, 측정에 쓰지 않는다)
+```
+
+| 옵션 | 뜻 (기본값) |
+| --- | --- |
+| `-c N` | 동시 클라이언트 수, 1~16 (1) |
+| `-s B` | 메시지 payload 바이트, 0~1048576 (64) |
+| `-n N` | 잴 메시지 수, 모든 클라이언트 합 (10000) |
+| `-w N` | 클라이언트마다 워밍업 메시지 수 (100) |
+| `-f N` | 클라이언트마다 동시에 띄워 둘 요청 수. 1이면 지연, 크면 처리량 (1) |
+| `-e S`, `-r N` | CSV의 실험 이름, 반복 번호 |
+| `-o F`, `-C S` | 결과 CSV 경로, 측정한 커밋 (기본: 환경 변수 `BENCH_COMMIT`) |
+| `-V` | 모든 응답의 내용을 검사한다 |
+| `-K` | `clock_gettime` 비용만 잰다 |
+
+1단계 전체 측정은 측정용 컴퓨터에서 다른 무거운 작업을 멈추고 돌린다(약 15분). 코드를 커밋한 뒤에만 돈다.
+
+```bash
+scripts/bench.sh                  # results/bench_*.csv, results/bench_env.txt
+python3 scripts/plot-bench.py     # docs/assets/bench/ 에 그래프와 요약표 (matplotlib 필요: sudo apt install python3-matplotlib)
+```
+
+`REPS`, `SIZES`, `CLIENTS`, `IPCS`, `INFLIGHT`, `OUT` 환경 변수로 일부만 돌릴 수 있다. 예: `REPS=1 SIZES="64 1048576" CLIENTS="1 8" OUT=/tmp/x scripts/bench.sh`
 
 ## 테스트
 
