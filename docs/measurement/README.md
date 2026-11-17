@@ -157,7 +157,7 @@ sequenceDiagram
 
 ```text
 stage,ipc,role,experiment,commit,run,
-msg_size,clients,inflight,workers,lock,draw_pct,rect,snap,
+msg_size,clients,inflight,workers,lock,tile,draw_pct,rect,snap,
 n,elapsed_s,lat_mean_us,lat_p50_us,lat_p99_us,lat_max_us,thr_msg_s,thr_mb_s,
 req_us,queue_us,lock_us,work_us,resp_us,
 utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
@@ -166,8 +166,9 @@ utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
 - `stage`는 `bench` 또는 `app`, `ipc`는 `pipe`·`mq`·`shm`, `role`은 `server` 또는 `client`.
 - `experiment`는 실험 이름이다. 1단계는 `latency`(동시 요청 1), `throughput`(동시 요청 16), `clock`(clock_gettime 비용, `ipc` 칸이 비어 있다).
 - `commit`은 측정한 코드의 커밋, `run`은 같은 조건의 반복 번호, `elapsed_s`는 측정 구간의 길이(초)다.
+- `workers`, `lock`, `tile`은 서버 옵션 `-w`, `-l`, `-t`의 값이다.
 - 해당 없는 칸은 비운다. 1단계에는 `workers`부터 `snap`까지와 구간별 시간이 없다.
-- 클라이언트 프로세스 여럿이 같은 파일에 써도 줄이 섞이지 않게 `csv_append`(`util.c`)가 파일 잠금을 걸고 쓴다. 2단계 `client.c`도 이 함수를 쓴다.
+- 클라이언트 프로세스 여럿이 같은 파일에 써도 줄이 섞이지 않게 `csv_append`(`util.c`)가 파일 잠금을 걸고 쓴다. 2단계 `client.c`도 이 함수를 쓴다. 머리글이 다른 파일(열을 바꾸기 전에 잰 결과)에는 덧붙이지 않고 실패한다.
 - 1단계 파일: `results/bench_latency.csv`, `results/bench_throughput.csv`, `results/bench_clock.csv`, 측정 환경 `results/bench_env.txt`.
 - 그래프는 이 CSV에서만 만든다. 축 이름과 단위(µs, ms, MB/s)를 표시하고, 같은 조건의 세 IPC를 한 그래프에 그린다.
 

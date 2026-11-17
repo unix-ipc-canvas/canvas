@@ -121,7 +121,7 @@ void csv_row_init(csv_row_t *r)
 {
     r->stage = r->ipc = r->role = r->experiment = r->commit = r->lock = NULL;
     r->run = -1;
-    r->msg_size = r->clients = r->inflight = r->workers = -1;
+    r->msg_size = r->clients = r->inflight = r->workers = r->tile = -1;
     r->draw_pct = r->rect = r->snap = -1;
     r->n = -1;
     r->elapsed_s = -1;
@@ -161,7 +161,7 @@ int csv_append(const char *path, const csv_row_t *r)
     put(&l, r->stage);      put(&l, r->ipc);        put(&l, r->role);
     put(&l, r->experiment); put(&l, r->commit);     put_long(&l, r->run);
     put_long(&l, r->msg_size); put_long(&l, r->clients); put_long(&l, r->inflight);
-    put_long(&l, r->workers);  put(&l, r->lock);
+    put_long(&l, r->workers);  put(&l, r->lock);    put_long(&l, r->tile);
     put_long(&l, r->draw_pct); put_long(&l, r->rect); put_long(&l, r->snap);
     put_long(&l, r->n);        put_dbl(&l, r->elapsed_s, 6);
     put_dbl(&l, r->lat_mean_us, 3); put_dbl(&l, r->lat_p50_us, 3);
@@ -174,18 +174,25 @@ int csv_append(const char *path, const csv_row_t *r)
     put_long(&l, r->vmrss_kb);  put_long(&l, r->vmhwm_kb);
     if (l.len > 0) l.buf[l.len - 1] = '\n';      /* 마지막 쉼표를 줄바꿈으로 */
 
-    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    int fd = open(path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd < 0) return -1;
     while (flock(fd, LOCK_EX) < 0) {
         if (errno != EINTR) { close(fd); return -1; }
     }
 
+    static const char hdr[] = CSV_HEADER "\n";
     int rc = 0;
     struct stat st;
     if (fstat(fd, &st) < 0) rc = -1;
     if (rc == 0 && st.st_size == 0) {
-        static const char hdr[] = CSV_HEADER "\n";
         if (write(fd, hdr, sizeof hdr - 1) != (ssize_t)(sizeof hdr - 1)) rc = -1;
+    } else if (rc == 0) {
+        /* 머리글이 다른 파일(열을 바꾸기 전의 결과 등)에 덧붙이면 열이 어긋난다. 쓰지 않는다 */
+        char got[sizeof hdr - 1];
+        if (pread(fd, got, sizeof got, 0) != (ssize_t)sizeof got || memcmp(got, hdr, sizeof got) != 0) {
+            errno = EBADMSG;
+            rc = -1;
+        }
     }
     if (rc == 0 && write(fd, l.buf, l.len) != (ssize_t)l.len) rc = -1;
 
