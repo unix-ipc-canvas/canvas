@@ -48,6 +48,14 @@ void usage_diff(const usage_t *end, const usage_t *start, usage_t *out);
 long vm_rss_kb(void);
 long vm_hwm_kb(void);
 
+/* ---- 오류 문구 ---- */
+
+/*
+ * strerror 의 스레드 안전판. buf 에 errno e 의 설명을 써서 돌려준다.
+ * strerror 는 POSIX 가 스레드 안전을 보장하지 않으므로(정적 버퍼를 쓸 수 있다) 스레드에서는 이것을 쓴다.
+ */
+const char *err_str(int e, char *buf, size_t len);
+
 /* ---- 결과 CSV ---- */
 
 /* 열 순서의 원본은 docs/measurement/README.md#원자료-형식 이다. 바꾸면 그 문서부터 고친다 */

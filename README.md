@@ -22,9 +22,10 @@ canvas/
 ├── readme.txt        # 제출용 readme
 ├── include/          # proto.h, transport.h
 ├── src/
-│   ├── transport/    # IPC별 전송 계층 (pipe, mq, shm)
+│   ├── transport/    # IPC별 전송 계층 (pipe, mq, shm, 벤치마크 전용 익명 pipe upipe)
 │   ├── common/       # 캔버스, 서버, 클라이언트, 검증기
-│   └── bench/        # 1단계 echo 벤치마크
+│   ├── bench/        # 1단계 echo 벤치마크
+│   └── test/         # 전송 계층 시험 도구
 ├── scripts/          # 검증·측정 스크립트
 ├── results/          # 측정 원자료 CSV
 └── docs/
@@ -83,11 +84,11 @@ make
 | `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
 > [!NOTE]
-> 지금은 전송 계층 3개와 1단계 벤치마크가 있다. 서버·클라이언트·검증기는 아직 없어 `make app`은 아무것도 만들지 않는다.
+> 지금은 전송 계층 3개(+ 벤치마크 전용 익명 pipe)와 1단계 벤치마크가 있다. 서버·클라이언트·검증기는 아직 없어 `make app`은 아무것도 만들지 않는다.
 
 ## 사용 방법
 
-`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 서버·클라이언트 옵션의 초안은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
+`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 1단계 벤치마크에는 강의 5장의 익명 pipe로 만든 `bench_upipe`도 있다. 익명 pipe는 fork로 물려받아야 이어지므로 서버·클라이언트는 만들지 않는다. 서버·클라이언트 옵션의 초안은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
 
 ### 1단계 벤치마크
 
@@ -112,7 +113,7 @@ make bench
 | `-V` | 모든 응답의 내용을 검사한다 |
 | `-K` | `clock_gettime` 비용만 잰다 |
 
-1단계 전체 측정은 측정용 컴퓨터에서 다른 무거운 작업을 멈추고 돌린다(약 15분). 코드를 커밋한 뒤에만 돈다.
+1단계 전체 측정은 측정용 컴퓨터에서 다른 무거운 작업을 멈추고 돌린다(약 20분). 코드를 커밋한 뒤에만 돈다.
 
 ```bash
 scripts/bench.sh                  # results/bench_*.csv, results/bench_env.txt
@@ -127,7 +128,15 @@ python3 scripts/plot-bench.py     # docs/assets/bench/ 에 그래프와 요약�
 make test
 ```
 
-문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다.
+문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다. 우리 서버가 떠 있지 않을 때 돌린다.
+
+전송 계층 시험(T-04)만 따로 돌리거나 새니타이저로 돌릴 수 있다.
+
+```bash
+make && scripts/test-transport.sh shm              # 고른 IPC 만 (생략하면 셋 다)
+make clean && make EXTRA_CFLAGS='-fsanitize=address,undefined' && scripts/test-transport.sh
+make clean && make EXTRA_CFLAGS='-fsanitize=thread' && scripts/test-transport.sh
+```
 
 ## 관련 문서
 

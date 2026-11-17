@@ -20,9 +20,11 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 RES = sys.argv[1] if len(sys.argv) > 1 else 'results'
 FIG = sys.argv[2] if len(sys.argv) > 2 else 'docs/assets/bench'
-IPCS = ['pipe', 'mq', 'shm']
-COLOR = {'pipe': '#2563eb', 'mq': '#d97706', 'shm': '#059669'}
-MARK = {'pipe': 'o', 'mq': 's', 'shm': '^'}
+IPCS = ['pipe', 'upipe', 'mq', 'shm']          # 그래프와 표에 그리는 순서
+RANKED = ['pipe', 'mq', 'shm']                 # 순위는 과제의 세 IPC 로만 매긴다. upipe(익명 pipe)는 FIFO 와 비교하는 대조군
+COLOR = {'pipe': '#2563eb', 'upipe': '#7c3aed', 'mq': '#d97706', 'shm': '#059669'}
+MARK = {'pipe': 'o', 'upipe': 'D', 'mq': 's', 'shm': '^'}
+LABEL = {'pipe': 'pipe (FIFO)', 'upipe': 'pipe (anonymous)', 'mq': 'mq', 'shm': 'shm'}
 
 
 def load(name):
@@ -101,14 +103,15 @@ for ipc in IPCS:
     xs = [s for s in sizes if (ipc, s, 1) in lat]
     if not xs:
         continue
-    ax.plot(xs, [med(lat[(ipc, s, 1)], 'lat_p50_us') for s in xs], marker=MARK[ipc], color=COLOR[ipc], label=f'{ipc} p50')
+    ax.plot(xs, [med(lat[(ipc, s, 1)], 'lat_p50_us') for s in xs], marker=MARK[ipc], color=COLOR[ipc],
+            label=f'{LABEL[ipc]} p50')
     ax.plot(xs, [med(lat[(ipc, s, 1)], 'lat_p99_us') for s in xs], ls='--', marker=MARK[ipc], mfc='none',
-            color=COLOR[ipc], alpha=0.7, label=f'{ipc} p99')
+            color=COLOR[ipc], alpha=0.7, label=f'{LABEL[ipc]} p99')
 ax.set_yscale('log')
 ax.set_ylabel('Round-trip latency (µs, log)')
 ax.set_title('Round-trip latency vs message size (1 client, 1 in flight)')
 size_axis(ax)
-ax.legend(ncol=3, fontsize=8)
+ax.legend(ncol=2, fontsize=8)
 save(fig, 'latency_size.png')
 
 # 2. 크기별 처리량 (클라이언트 1, 동시 요청 INFLIGHT)
@@ -119,8 +122,8 @@ if thr:
         xs = [s for s in sizes if (ipc, s, 1) in thr]
         if not xs:
             continue
-        a1.plot(xs, [med(thr[(ipc, s, 1)], 'thr_mb_s') for s in xs], marker=MARK[ipc], color=COLOR[ipc], label=ipc)
-        a2.plot(xs, [med(thr[(ipc, s, 1)], 'thr_msg_s') for s in xs], marker=MARK[ipc], color=COLOR[ipc], label=ipc)
+        a1.plot(xs, [med(thr[(ipc, s, 1)], 'thr_mb_s') for s in xs], marker=MARK[ipc], color=COLOR[ipc], label=LABEL[ipc])
+        a2.plot(xs, [med(thr[(ipc, s, 1)], 'thr_msg_s') for s in xs], marker=MARK[ipc], color=COLOR[ipc], label=LABEL[ipc])
     a1.set_ylabel('Throughput (MB/s, 1 MB = 10^6 B)')
     a2.set_ylabel('Throughput (messages/s, log)')
     a2.set_yscale('log')
@@ -138,7 +141,7 @@ def by_clients(data, col, ylabel, title, name, logy):
         for ipc in IPCS:
             xs = [c for c in clients if (ipc, s, c) in data]
             if xs:
-                ax.plot(xs, [med(data[(ipc, s, c)], col) for c in xs], marker=MARK[ipc], color=COLOR[ipc], label=ipc)
+                ax.plot(xs, [med(data[(ipc, s, c)], col) for c in xs], marker=MARK[ipc], color=COLOR[ipc], label=LABEL[ipc])
         ax.set_title(size_label(s))
         ax.set_xscale('log', base=2)
         ax.set_xticks(clients)
@@ -172,8 +175,8 @@ for ipc in IPCS:
         cs.append((med(c, 'nvcsw') + med(sv, 'nvcsw')) / n)
         cpu.append((med(c, 'utime_s') + med(c, 'stime_s') + med(sv, 'utime_s') + med(sv, 'stime_s')) / n * 1e6)
     if xs:
-        a1.plot(xs, cs, marker=MARK[ipc], color=COLOR[ipc], label=ipc)
-        a2.plot(xs, cpu, marker=MARK[ipc], color=COLOR[ipc], label=ipc)
+        a1.plot(xs, cs, marker=MARK[ipc], color=COLOR[ipc], label=LABEL[ipc])
+        a2.plot(xs, cpu, marker=MARK[ipc], color=COLOR[ipc], label=LABEL[ipc])
 a1.set_ylabel('Voluntary context switches per message')
 a2.set_ylabel('CPU time per message (µs, user + sys)')
 for a in (a1, a2):
@@ -188,7 +191,8 @@ out = []
 w = out.append
 w('# 1단계 측정 요약\n')
 w('`scripts/plot-bench.py` 가 `results/bench_*.csv` 에서 만든 파일이다. 손으로 고치지 않는다. '
-  '같은 조건을 여러 번 잰 값은 실행마다의 값의 중앙값이다. 지연 단위는 µs, 처리량은 MB/s (1 MB = 10^6 B).\n')
+  '같은 조건을 여러 번 잰 값은 실행마다의 값의 중앙값이다. 지연 단위는 µs, 처리량은 MB/s (1 MB = 10^6 B). '
+  '순위는 pipe, mq, shm 사이에서만 매긴다. upipe(익명 pipe)는 FIFO 와 이름 유무만 다른 대조군이다.\n')
 
 env = os.path.join(RES, 'bench_env.txt')
 if os.path.exists(env):
@@ -208,7 +212,7 @@ w('| 크기 | IPC | 평균 | 중앙값 | 상위 99% | 최대 | p50 순위 | 실�
 w('| --- | --- | ---: | ---: | ---: | ---: | :---: | ---: |')
 rank_lat = {}
 for s in sizes:
-    p50 = {ipc: med(lat[(ipc, s, 1)], 'lat_p50_us') for ipc in IPCS if (ipc, s, 1) in lat}
+    p50 = {ipc: med(lat[(ipc, s, 1)], 'lat_p50_us') for ipc in RANKED if (ipc, s, 1) in lat}
     order = sorted(p50, key=p50.get)
     rank_lat[s] = order
     for ipc in IPCS:
@@ -216,8 +220,9 @@ for s in sizes:
             continue
         r = lat[(ipc, s, 1)]
         sp = spread(r, 'lat_p50_us')
+        rank = order.index(ipc) + 1 if ipc in order else '-'
         w(f'| {size_label(s)} | {ipc} | {med(r, "lat_mean_us"):.2f} | {med(r, "lat_p50_us"):.2f} | '
-          f'{med(r, "lat_p99_us"):.2f} | {med(r, "lat_max_us"):.2f} | {order.index(ipc) + 1} | '
+          f'{med(r, "lat_p99_us"):.2f} | {med(r, "lat_max_us"):.2f} | {rank} | '
           f'{"-" if sp is None else f"{sp * 100:.0f}%"} |')
 
 if thr:
@@ -228,7 +233,7 @@ if thr:
     for s in sizes:
         mb = {i: med(thr[(i, s, 1)], 'thr_mb_s') for i in IPCS if (i, s, 1) in thr}
         ms = {i: med(thr[(i, s, 1)], 'thr_msg_s') for i in IPCS if (i, s, 1) in thr}
-        order = sorted(mb, key=mb.get, reverse=True)
+        order = sorted((i for i in mb if i in RANKED), key=mb.get, reverse=True)
         w(f'| {size_label(s)} | ' + ' | '.join(f'{mb[i]:.1f}' if i in mb else '-' for i in IPCS) + ' | '
           + ' | '.join(f'{ms[i]:.0f}' if i in ms else '-' for i in IPCS) + ' | ' + ' > '.join(order) + ' |')
 
@@ -243,7 +248,7 @@ def client_table(data, col, title, fmt):
             if not v:
                 continue
             best_low = col.startswith('lat')
-            order = sorted(v, key=v.get, reverse=not best_low)
+            order = sorted((i for i in v if i in RANKED), key=v.get, reverse=not best_low)
             w(f'| {size_label(s)} | {c} | ' + ' | '.join(fmt.format(v[i]) if i in v else '-' for i in IPCS)
               + ' | ' + (' < ' if best_low else ' > ').join(order) + ' |')
 
@@ -251,6 +256,21 @@ def client_table(data, col, title, fmt):
 client_table(lat, 'lat_p50_us', '클라이언트 수별 지연 중앙값 (µs, 동시 요청 1)', '{:.2f}')
 if thr:
     client_table(thr, 'thr_mb_s', '클라이언트 수별 처리량 (MB/s)', '{:.1f}')
+
+if any(k[0] == 'upipe' for k in lat):
+    w('\n## FIFO 와 익명 pipe (클라이언트 1)\n')
+    w('이름이 있는지만 다르고 커널 안의 pipe 버퍼는 같다. 비율이 1 에 가까우면 이름(경로 탐색·open)은 송수신 비용에 영향이 없다.\n')
+    w('| 크기 | pipe p50 (µs) | upipe p50 (µs) | upipe / pipe | pipe MB/s | upipe MB/s |')
+    w('| --- | ---: | ---: | ---: | ---: | ---: |')
+    for s in sizes:
+        a, b = lat.get(('pipe', s, 1)), lat.get(('upipe', s, 1))
+        if not a or not b:
+            continue
+        pa, pb = med(a, 'lat_p50_us'), med(b, 'lat_p50_us')
+        ta = med(thr[('pipe', s, 1)], 'thr_mb_s') if ('pipe', s, 1) in thr else None
+        tb = med(thr[('upipe', s, 1)], 'thr_mb_s') if ('upipe', s, 1) in thr else None
+        w(f'| {size_label(s)} | {pa:.2f} | {pb:.2f} | {pb / pa:.2f} | '
+          f'{"-" if ta is None else f"{ta:.1f}"} | {"-" if tb is None else f"{tb:.1f}"} |')
 
 w('\n## 순위가 바뀌는 지점 (클라이언트 1, 지연 중앙값)\n')
 prev = None

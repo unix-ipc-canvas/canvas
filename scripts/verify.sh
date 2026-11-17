@@ -29,7 +29,7 @@ fi
 
 # T-02 IPC 버전별 따로 빌드
 ipcs_have=""
-for i in pipe mq shm; do [ -f "src/transport/transport_$i.c" ] && ipcs_have="$ipcs_have $i"; done
+for i in pipe mq shm upipe; do [ -f "src/transport/transport_$i.c" ] && ipcs_have="$ipcs_have $i"; done
 if [ -z "$ipcs_have" ]; then
     sk T-02 "버전별 빌드: 전송 계층 소스 없음"
 else
@@ -43,13 +43,46 @@ else
 fi
 
 # T-03 공통 코드에 IPC 고유 호출 없음
-common=$(ls src/common/*.c src/bench/*.c 2>/dev/null)
+common=$(ls src/common/*.c src/bench/*.c src/test/*.c 2>/dev/null)
 if [ -z "$common" ]; then
     sk T-03 "공통 코드의 IPC 호출 검사: 소스 없음"
 elif grep -nE '\b(msgget|msgsnd|msgrcv|msgctl|shmget|shmat|shmdt|shmctl|semget|semop|semctl|mkfifo)\b' $common >"$log"; then
     ng T-03 "공통 코드에 IPC 고유 호출이 있음"; cat "$log"
 else
     ok T-03 "공통 코드에 IPC 고유 호출 없음"
+fi
+
+# T-04 전송 계층 시험, T-05 1단계 벤치마크 내용 검사. 전체를 다시 빌드한 뒤 돌린다
+if ! make -s clean >/dev/null 2>&1 || ! make -s >"$log" 2>&1; then
+    ng T-04 "전송 계층 시험: 빌드 실패"; cat "$log"
+    ng T-05 "벤치마크 내용 검사: 빌드 실패"
+else
+    tp_have=""
+    for i in pipe mq shm; do [ -x "bin/tptest_$i" ] && tp_have="$tp_have $i"; done
+    if [ -z "$tp_have" ]; then
+        sk T-04 "전송 계층 시험: 시험 도구 없음"
+    else
+        for i in $tp_have; do
+            if timeout 300 scripts/test-transport.sh "$i" >"$log" 2>&1; then
+                ok T-04 "전송 계층 시험 $i ($(grep -c '^PASS' "$log")개 항목)"
+            else
+                ng T-04 "전송 계층 시험 $i"; grep -v '^PASS' "$log"
+            fi
+        done
+    fi
+    b_have=$(ls bin/bench_* 2>/dev/null)
+    if [ -z "$b_have" ]; then
+        sk T-05 "벤치마크 내용 검사: 실행 파일 없음"
+    else
+        maxp=$((32 + 1024 * 1024))
+        for b in $b_have; do
+            bad=""
+            for args in "-c 1 -s 64 -n 2000 -f 1" "-c 8 -s 4097 -n 800 -f 16" "-c 4 -s $maxp -n 40 -f 4" "-c 2 -s 0 -n 500 -f 8"; do
+                timeout 120 "$b" $args -w 4 -V >"$log" 2>&1 || bad="$bad [$args] $(tail -1 "$log")"
+            done
+            if [ -z "$bad" ]; then ok T-05 "$(basename "$b") -V 내용 검사"; else ng T-05 "$(basename "$b") -V:$bad"; fi
+        done
+    fi
 fi
 
 # T-10 ~ T-41 실행 검사: 서버·클라이언트 구현 뒤 이 자리에 추가한다

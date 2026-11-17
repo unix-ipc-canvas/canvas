@@ -24,6 +24,7 @@
  * DECISION: 서버는 받은 스레드에서 바로 돌려준다. 작업 큐와 워커를 거치면 스레드 깨우기 비용이 섞여
  *   IPC 자체의 차이가 가려진다. 큐·워커 비용은 2단계 응용에서 구간별 시간으로 따로 잰다.
  * DECISION: 벤치 전용 메시지 종류(BENCH_ECHO)는 이 파일 안에 둔다. 응용 프로토콜이 아니므로 proto.h 를 바꾸지 않는다.
+ * fork 앞뒤에 tp_prefork, tp_postfork 를 부른다. 익명 pipe 버전(bench_upipe)이 채널을 물려주는 자리다.
  */
 #include <errno.h>
 #include <inttypes.h>
@@ -122,8 +123,9 @@ typedef struct {
 
 static void srv_error(srv_t *s, const char *what, int e)
 {
+    char eb[128];
     pthread_mutex_lock(&s->mtx);
-    if (!s->res.err[0]) snprintf(s->res.err, sizeof s->res.err, "서버 %s: %s", what, strerror(e));
+    if (!s->res.err[0]) snprintf(s->res.err, sizeof s->res.err, "서버 %s: %s", what, err_str(e, eb, sizeof eb));
     pthread_mutex_unlock(&s->mtx);
 }
 
@@ -226,18 +228,28 @@ static int run_server(const char *dir, pid_t driver)
         return 1;
     }
     if (tp_server_open() < 0) {
-        snprintf(s.res.err, sizeof s.res.err, "tp_server_open: %s", strerror(errno));
+        char eb[128];
+        snprintf(s.res.err, sizeof s.res.err, "tp_server_open: %s", err_str(errno, eb, sizeof eb));
         write_result(dir, "server", &s.res, NULL, 0);
         return 1;
     }
 
-    pthread_t echo, admin, stats;
-    pthread_create(&echo, NULL, srv_echo_main, &s);
-    pthread_create(&admin, NULL, srv_admin_main, &s);
-    pthread_create(&stats, NULL, srv_stats_main, &s);
-    pthread_join(admin, NULL);
-    pthread_join(echo, NULL);
-    pthread_join(stats, NULL);
+    pthread_t th[3];                                    /* echo, admin, stats */
+    void *(*const th_main[3])(void *) = { srv_echo_main, srv_admin_main, srv_stats_main };
+    for (int i = 0; i < 3; i++) {
+        int e = pthread_create(&th[i], NULL, th_main[i], &s);
+        if (e) {
+            /* 만든 스레드는 거두지 않는다. 자원만 지우고 프로세스째 끝낸다 (_exit 가 남은 스레드를 끝낸다) */
+            srv_error(&s, "pthread_create", e);
+            tp_server_wake();
+            tp_server_close();
+            write_result(dir, "server", &s.res, NULL, 0);
+            return 1;
+        }
+    }
+    pthread_join(th[1], NULL);                          /* admin: 종료 신호를 받으면 echo 를 깨우고 끝난다 */
+    pthread_join(th[0], NULL);
+    pthread_join(th[2], NULL);
     tp_server_close();
 
     usage_diff(&s.u_end, &s.u_start, &s.res.usage);
@@ -262,6 +274,7 @@ typedef struct {
     sem_t           slots;              /* 더 띄울 수 있는 요청 수 */
     pthread_mutex_t mtx;
     pthread_cond_t  cv;
+    bool            started;            /* HELLO 를 주고받았다. 송수신 스레드가 이것을 기다렸다가 시작한다 */
     bool            warm_sent, warm_done, go, recv_done;
     atomic_bool     failed;
     result_t        res;
@@ -271,15 +284,26 @@ typedef struct {
 /* 실패를 기록하고 기다리는 스레드를 모두 깨운다 */
 static void cli_fail(cli_t *c, const char *what, int e)
 {
+    char eb[128];
     pthread_mutex_lock(&c->mtx);
     if (!atomic_load(&c->failed)) {
         snprintf(c->res.err, sizeof c->res.err, "클라이언트 %u %s%s%s", c->id, what,
-                 e ? ": " : "", e ? strerror(e) : "");
+                 e ? ": " : "", e ? err_str(e, eb, sizeof eb) : "");
         atomic_store(&c->failed, true);
     }
     pthread_cond_broadcast(&c->cv);
     pthread_mutex_unlock(&c->mtx);
     for (unsigned i = 0; i <= c->cfg->inflight; i++) sem_post(&c->slots);
+}
+
+/* main 이 HELLO 를 주고받을 때까지 기다린다. 그 전에 실패했으면 false */
+static bool wait_start(cli_t *c)
+{
+    pthread_mutex_lock(&c->mtx);
+    while (!c->started && !atomic_load(&c->failed)) pthread_cond_wait(&c->cv, &c->mtx);
+    bool ok = !atomic_load(&c->failed);
+    pthread_mutex_unlock(&c->mtx);
+    return ok;
 }
 
 static void slot_take(cli_t *c)
@@ -329,6 +353,7 @@ static void *cli_send_main(void *arg)
     h.type = BENCH_ECHO;
     h.client_id = c->id;
     h.payload_len = (uint32_t)c->cfg->size;
+    if (!wait_start(c)) return NULL;
 
     for (uint64_t i = 0; i < c->warm; i++)
         if (send_one(c, &h, i) < 0) return NULL;
@@ -385,7 +410,7 @@ static int recv_one(cli_t *c)
 static void *cli_recv_main(void *arg)
 {
     cli_t *c = arg;
-    bool ok = true;
+    bool ok = wait_start(c);
     for (uint64_t j = 0; ok && j < c->warm; j++)
         ok = recv_one(c) == 0;
 
@@ -422,7 +447,8 @@ static void *cli_stats_main(void *arg)
 
 static int client_fail_early(const char *dir, const char *name, result_t *res, const char *what, int e)
 {
-    snprintf(res->err, sizeof res->err, "%s: %s", what, strerror(e));
+    char eb[128];
+    snprintf(res->err, sizeof res->err, "%s: %s", what, err_str(e, eb, sizeof eb));
     write_result(dir, name, res, NULL, 0);
     return 1;
 }
@@ -464,37 +490,46 @@ static int run_client(const cfg_t *cfg, uint32_t id, uint64_t n, const char *dir
     memcpy(c.sbuf, c.pattern, bsz);
     memset(c.rbuf, 0, bsz);
 
-    /*
-     * 첫 요청은 HELLO 다 (pipe 전송 계층의 약속).
-     * HELLO 도 측정 메시지와 같은 크기로 보낸다. pipe 버전은 PIPE_BUF 이하 요청을 잠금 없이 쓰므로,
-     * 24B HELLO 가 다른 클라이언트의 큰 요청 사이에 끼어들어 요청 스트림이 섞인다 (-V 검사로 확인).
-     */
-    msg_hdr_t h;
-    memset(&h, 0, sizeof h);
-    h.type = REQ_HELLO;
-    h.client_id = id;
-    h.req_id = HELLO_ID;
-    h.payload_len = (uint32_t)cfg->size;
-    if (tp_send_req(&h, c.sbuf) < 0) {
-        int e = errno;
-        tp_client_close();
-        return client_fail_early(dir, name, &c.res, "HELLO 보내기", e);
-    }
-    errno = 0;
-    if (tp_recv_resp(&h, c.rbuf, cfg->size) < 0 || h.req_id != HELLO_ID) {
-        int e = errno ? errno : EPROTO;
-        tp_client_close();
-        return client_fail_early(dir, name, &c.res, "HELLO 응답", e);
-    }
-
     sem_init(&c.slots, 0, cfg->inflight);
     pthread_mutex_init(&c.mtx, NULL);
     pthread_cond_init(&c.cv, NULL);
 
-    pthread_t recv_th, send_th, stats_th;
-    pthread_create(&recv_th, NULL, cli_recv_main, &c);
-    pthread_create(&send_th, NULL, cli_send_main, &c);
-    pthread_create(&stats_th, NULL, cli_stats_main, &c);
+    /*
+     * 스레드를 먼저 만들고, HELLO 를 주고받은 뒤에 출발시킨다. 스레드를 만들다 실패해도
+     * 전송 계층 안에서 막혀 있는 스레드가 없으므로 모두 거두고 tp_client_close 로 닫을 수 있다.
+     */
+    pthread_t th[3];
+    void *(*const th_main[3])(void *) = { cli_recv_main, cli_send_main, cli_stats_main };
+    unsigned made = 0;
+    for (; made < 3; made++) {
+        int e = pthread_create(&th[made], NULL, th_main[made], &c);
+        if (e) { cli_fail(&c, "pthread_create", e); break; }
+    }
+
+    /*
+     * 첫 요청은 HELLO 다 (transport.h 의 약속). 송수신 스레드가 출발하기 전이라 main 만 송수신한다.
+     * HELLO 도 측정 메시지와 같은 크기로 보낸다. pipe 버전은 PIPE_BUF 이하 요청을 잠금 없이 쓰므로,
+     * 24B HELLO 가 다른 클라이언트의 큰 요청 사이에 끼어들어 요청 스트림이 섞인다 (-V 검사로 확인).
+     */
+    if (made == 3) {
+        msg_hdr_t h;
+        memset(&h, 0, sizeof h);
+        h.type = REQ_HELLO;
+        h.client_id = id;
+        h.req_id = HELLO_ID;
+        h.payload_len = (uint32_t)cfg->size;
+        if (tp_send_req(&h, c.sbuf) < 0) {
+            cli_fail(&c, "HELLO 보내기", errno);
+        } else {
+            errno = 0;
+            if (tp_recv_resp(&h, c.rbuf, cfg->size) < 0 || h.req_id != HELLO_ID)
+                cli_fail(&c, "HELLO 응답", errno ? errno : EPROTO);
+        }
+    }
+    pthread_mutex_lock(&c.mtx);
+    if (!atomic_load(&c.failed)) c.started = true;
+    pthread_cond_broadcast(&c.cv);
+    pthread_mutex_unlock(&c.mtx);
 
     /* 워밍업 응답을 모두 받으면 준비 신호를 보내고 시작 신호를 기다린다 */
     pthread_mutex_lock(&c.mtx);
@@ -519,9 +554,7 @@ static int run_client(const cfg_t *cfg, uint32_t id, uint64_t n, const char *dir
         }
     }
 
-    pthread_join(send_th, NULL);
-    pthread_join(recv_th, NULL);
-    pthread_join(stats_th, NULL);
+    for (unsigned i = 0; i < made; i++) pthread_join(th[i], NULL);
     tp_client_close();
 
     usage_diff(&c.u_end, &c.u_start, &c.res.usage);
@@ -536,7 +569,7 @@ static int run_client(const cfg_t *cfg, uint32_t id, uint64_t n, const char *dir
  * ================================================================ */
 
 typedef struct {
-    pid_t pid;
+    pid_t pid;          /* fork 하지 못했으면 0. 0 이나 -1 로 kill 하면 다른 프로세스까지 죽으므로 늘 확인한다 */
     bool  done;
     int   status;
 } child_t;
@@ -553,16 +586,19 @@ static void reap(child_t *ch, unsigned cnt)
     }
 }
 
-static bool child_ok(const child_t *c) { return c->done && WIFEXITED(c->status) && WEXITSTATUS(c->status) == 0; }
+static bool child_ok(const child_t *c)
+{
+    return c->pid > 0 && c->done && WIFEXITED(c->status) && WEXITSTATUS(c->status) == 0;
+}
 
 /* ch[0] 은 서버, ch[1..] 은 클라이언트다. 모두 끝낸다 (클라이언트는 강제로, 서버는 정리할 기회를 준다) */
 static void stop_all(child_t *ch, unsigned cnt)
 {
-    for (unsigned i = 1; i < cnt; i++) if (!ch[i].done) kill(ch[i].pid, SIGKILL);
+    for (unsigned i = 1; i < cnt; i++) if (ch[i].pid > 0 && !ch[i].done) kill(ch[i].pid, SIGKILL);
     for (unsigned i = 1; i < cnt; i++) {
-        if (!ch[i].done) { waitpid(ch[i].pid, &ch[i].status, 0); ch[i].done = true; }
+        if (ch[i].pid > 0 && !ch[i].done) { waitpid(ch[i].pid, &ch[i].status, 0); ch[i].done = true; }
     }
-    if (!ch[0].done) {
+    if (ch[0].pid > 0 && !ch[0].done) {
         kill(ch[0].pid, SIGTERM);
         for (int k = 0; k < 500 && !ch[0].done; k++) { reap(ch, cnt); if (!ch[0].done) sleep_ms(10); }
         if (!ch[0].done) {
@@ -697,7 +733,9 @@ static int aggregate(const cfg_t *cfg, const char *dir)
     srow.vmhwm_kb = sr.vmhwm_kb;
 
     if (cfg->out && (csv_append(cfg->out, &row) < 0 || csv_append(cfg->out, &srow) < 0)) {
-        fprintf(stderr, "bench: %s 에 쓰지 못함: %s\n", cfg->out, strerror(errno));
+        char eb[128];
+        fprintf(stderr, "bench: %s 에 쓰지 못함: %s\n", cfg->out,
+                errno == EBADMSG ? "머리글이 지금의 열과 다르다 (열을 바꾸기 전에 만든 파일)" : err_str(errno, eb, sizeof eb));
         rc = -1;
     }
     fprintf(stderr, "%-4s %-10s s=%-7zu c=%u f=%-2u n=%-6" PRIu64 " mean=%.2fus p50=%.2fus p99=%.2fus max=%.2fus"
@@ -758,16 +796,35 @@ static int run_driver(const cfg_t *cfg)
     if (!ch || !ready) { fprintf(stderr, "bench: 메모리 부족\n"); return 1; }
     fflush(NULL);
 
-    ch[0].pid = fork();
-    if (ch[0].pid == 0) _exit(run_server(dir, driver));
-    for (unsigned i = 0; i < cfg->clients; i++) {
-        uint64_t n = cfg->n / cfg->clients + (i < cfg->n % cfg->clients ? 1 : 0);
-        ch[i + 1].pid = fork();
-        if (ch[i + 1].pid == 0) _exit(run_client(cfg, i, n, dir, driver));
+    /* 익명 pipe 버전은 여기서 채널을 만들어 자식에게 물려준다. 다른 버전은 아무것도 하지 않는다 */
+    if (tp_prefork() < 0) {
+        char eb[128];
+        fprintf(stderr, "bench: tp_prefork: %s\n", err_str(errno, eb, sizeof eb));
+        remove_dir(dir, cfg->clients);
+        free(ch);
+        free(ready);
+        return 1;
     }
 
+    /* ch[0] 은 서버, ch[1..] 은 클라이언트다. fork 가 실패하면 나머지는 띄우지 않고 (pid 0) 실패로 끝낸다 */
     int rc = 0;
-    if (wait_ready(ch, cnt, ready, cfg->clients, false, RUN_SEC) < 0) {
+    for (unsigned i = 0; i < cnt; i++) {
+        pid_t p = fork();
+        if (p < 0) {
+            perror("bench: fork");
+            rc = -1;
+            break;
+        }
+        if (p == 0) {
+            if (i == 0) _exit(run_server(dir, driver));
+            uint64_t n = cfg->n / cfg->clients + (i - 1 < cfg->n % cfg->clients ? 1 : 0);
+            _exit(run_client(cfg, i - 1, n, dir, driver));
+        }
+        ch[i].pid = p;
+    }
+    tp_postfork();      /* 조정 프로세스가 쥔 채널 끝을 닫는다. 그래야 한쪽이 끝났을 때 상대가 EOF·EPIPE 로 안다 */
+
+    if (rc == 0 && wait_ready(ch, cnt, ready, cfg->clients, false, RUN_SEC) < 0) {
         fprintf(stderr, "bench: 클라이언트가 준비되지 못했다\n");
         rc = -1;
     }
@@ -787,14 +844,24 @@ static int run_driver(const cfg_t *cfg)
         uint64_t deadline = now_ns() + (uint64_t)RUN_SEC * 1000000000ull;
         for (;;) {
             reap(ch, cnt);
-            bool all = true;
-            for (unsigned i = 1; i < cnt; i++) all = all && ch[i].done;
+            bool all = true, failed = false;
+            for (unsigned i = 1; i < cnt; i++) {
+                all = all && ch[i].done;
+                failed = failed || (ch[i].done && !child_ok(&ch[i]));
+            }
             if (all) break;
-            if (ch[0].done || now_ns() > deadline) { rc = -1; break; }
+            /* 이 실행은 이미 실패다. 남은 클라이언트가 할당량을 다 채울 때까지 기다리지 않는다 */
+            const char *why = failed ? "클라이언트가 실패로 먼저 끝났다"
+                            : ch[0].done ? "서버가 먼저 끝났다"
+                            : now_ns() > deadline ? "제한 시간 안에 끝나지 않았다" : NULL;
+            if (why) {
+                fprintf(stderr, "bench: %s\n", why);
+                rc = -1;
+                break;
+            }
             struct timespec to = { 1, 0 };
             sigtimedwait(&chld, NULL, &to);
         }
-        if (rc < 0) fprintf(stderr, "bench: 제한 시간 안에 끝나지 않았다\n");
     }
     stop_all(ch, cnt);
 

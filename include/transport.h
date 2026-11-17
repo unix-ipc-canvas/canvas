@@ -7,6 +7,7 @@
  *   src/transport/transport_pipe.c   FIFO (이름 있는 pipe)
  *   src/transport/transport_mq.c     System V message queue
  *   src/transport/transport_shm.c    System V shared memory + semaphore
+ *   src/transport/transport_upipe.c  익명 pipe. 1단계 벤치마크 전용 (fork 로 물려받아야 이어진다)
  *
  * ==== 약속 (구현과 부르는 쪽이 모두 지킨다) ====
  *
@@ -64,7 +65,7 @@
 #endif
 #define IPC_KEY(y) ((key_t)(60000 + TEAM_NO * 10 + (y)))
 
-const char *tp_name(void);              /* "pipe", "mq", "shm" */
+const char *tp_name(void);              /* "pipe", "mq", "shm", "upipe" */
 
 /* ---- 서버 쪽 ---- */
 int     tp_server_open(void);                                   /* 요청 채널 만들기 */
