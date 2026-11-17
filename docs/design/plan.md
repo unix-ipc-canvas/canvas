@@ -10,7 +10,7 @@
 
 ```text
 canvas/
-├── include/          proto.h, transport.h          (합의 후 고정)
+├── include/          proto.h, transport.h          (바꿀 때 owner 승인)
 ├── src/transport/    transport_{pipe,mq,shm}.c     (IPC 담당이 1개씩)
 ├── src/common/       canvas, server, client, verify, util
 ├── src/bench/        bench.c                       (1단계 echo 벤치마크)
@@ -34,7 +34,7 @@ canvas/
 | `scripts/` | 실험 실행, 그래프, `verify.sh` | 측정 담당 |
 
 - `server.c`, `client.c`, `bench.c`에는 IPC 고유 코드(`msgsnd`, `shmat`, `mkfifo` 등)를 넣지 않는다.
-- `include/`의 두 헤더는 초안이다. 11월 15일까지 확정하고, 그 뒤에는 세 사람이 합의한 PR로만 바꾼다.
+- `include/`의 두 헤더는 owner가 승인한 PR로만 바꾼다([PR 규칙](../CONTRIBUTING.md#pr)).
 - 설계 선택은 모두 실행 옵션으로 만든다([실행 옵션](README.md#실행-옵션)).
 - 처음 구현은 전역 락 1개다. 타일별 락과 그 밖의 개선은 원인 분석 뒤 [설계 개선](#단계별-계획) 단계에서 넣어 전후를 잰다.
 - 명세에 없는 결정은 가장 단순한 쪽으로 하고 코드에 `/* DECISION: ... */`로 남긴 뒤 PR에서 알린다.

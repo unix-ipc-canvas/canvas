@@ -33,7 +33,9 @@
 - 하나의 목적을 다루고, 본문에 변경 이유·내용과 검증 방법·결과를 적는다. 검사를 실행하지 못했다면 이유를 적는다.
 - 이슈를 해결하면 `Fixes #123`, 참고만 하면 `Refs #123`으로 연결한다.
 - 필요한 문서 변경을 함께 넣고, 해당하지 않는 템플릿 항목은 삭제한다.
-- 합치기 전에 CI가 통과해야 하고, 다른 팀원 1명이 확인한다. `include/`의 두 헤더를 바꾸는 PR은 세 사람이 모두 확인한다.
+- 합치기 전에 CI가 통과해야 한다. 다른 팀원의 리뷰나 코멘트는 필요 없고, CI가 통과하면 PR을 연 사람이 합친다.
+- `include/proto.h`, `include/transport.h`를 바꾸는 PR은 owner가 승인한 뒤 합친다. owner가 연 PR은 바로 합친다. 두 파일을 바꾸면 GitHub가 owner를 리뷰어로 자동 지정한다([CODEOWNERS](../.github/CODEOWNERS)).
+- owner는 저장소를 관리하는 이동건([@Movinggun-bit](https://github.com/Movinggun-bit), 조직 관리자)이다. `main` 보호 규칙(직접 푸시 금지, CI 필수)도 owner가 관리한다.
 
 ## 넣지 않는 것
 
