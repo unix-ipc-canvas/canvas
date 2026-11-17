@@ -60,7 +60,9 @@ cpu_snapshot() {
     echo; echo "## free -h"; free -h | head -2
     echo; echo "## os"; (. /etc/os-release && echo "$PRETTY_NAME"); uname -r
     echo; echo "## gcc"; gcc --version | head -1
-    echo; echo "## virtualization"; systemd-detect-virt 2>/dev/null || echo "(systemd-detect-virt 없음)"
+    # 가상화가 없으면 none 을 찍고 종료 코드 1 로 끝난다. 그래서 종료 코드가 아니라 명령이 있는지로 나눈다
+    echo; echo "## virtualization"
+    if command -v systemd-detect-virt >/dev/null; then systemd-detect-virt || true; else echo "(systemd-detect-virt 없음)"; fi
     echo; echo "## cpufreq governor"; cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c || echo "(없음)"
     echo; echo "## IPC 한도"
     echo "msgmax: $(cat /proc/sys/kernel/msgmax)"
