@@ -45,7 +45,7 @@ IPC는 한 사람이 하나씩 맡고, 공통 코드·보고서·발표는 셋�
 
 | | A: pipe + 서버 | B: mq + 클라이언트, 예측·문서 총괄 | C: shm + 측정 |
 | --- | --- | --- | --- |
-| 팀원 | | | |
+| 팀원 | [@pinoba](https://github.com/pinoba) | [@hyungunoh321](https://github.com/hyungunoh321) | [@Movinggun-bit](https://github.com/Movinggun-bit) |
 | IPC | `transport_pipe.c` | `transport_mq.c` (큰 메시지 분할·재조립, 응답 큐 방식 결정) | `transport_shm.c` (링 버퍼, 슬롯, 세마포어, 알림 방식 결정) |
 | 공통 코드 | `canvas.c`, `server.c` (스레드, 작업 큐, 락 옵션, 종료 처리) | `client.c` (워크로드 생성, CSV 출력), `verify.c` | `util.c`, `bench.c` |
 | 검증·측정 | `verify.sh`의 실행 검사 T-10~T-31 | T-40·T-41, `readme.txt`, `make dist`와 tar 점검 | 측정 스크립트, 그래프, CSV 열 확정, 측정용 컴퓨터 관리 |
@@ -54,7 +54,6 @@ IPC는 한 사람이 하나씩 맡고, 공통 코드·보고서·발표는 셋�
 | 발표 | 데모 촬영 | 발표자료 취합, 제출 점검 | 측정 결과 슬라이드 |
 | 그 밖 | FIFO를 pipe로 인정하는지 교수님께 확인 | AI 활용 기록 정리 | 측정 환경 기록 |
 
-- 팀원 칸은 비어 있다. 11월 15일 팀 회의에서 채운다. 측정용 컴퓨터를 가진 사람이 C를 맡는다.
 - 세 사람 모두 11월 15일까지 자기 `transport_*.c`의 기본 송수신을 끝낸다. 늦으면 C의 1단계 측정이 시작되지 못해 예측과 구현이 함께 밀린다.
 - 예측을 커밋하기 전에는 A는 `canvas.c`, B는 `verify.c`, C는 `util.c`를 먼저 만든다. `server.c`, `client.c`는 예측 커밋 뒤에 시작한다.
 
