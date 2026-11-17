@@ -65,8 +65,7 @@ $(BIN):
 	@mkdir -p $@
 
 check:
-	@$(CC) $(CFLAGS) -fsyntax-only -x c include/proto.h
-	@$(CC) $(CFLAGS) -fsyntax-only -x c include/transport.h
+	@for h in include/*.h; do $(CC) $(CFLAGS) -fsyntax-only -x c $$h || exit 1; done
 	@echo "헤더 검사 통과 (TEAM_NO=$(TEAM_NO))"
 	@echo "전송 계층 구현: $(if $(strip $(HAVE)),$(strip $(HAVE)),아직 없음)"
 	@echo "빌드 대상: $(if $(strip $(BENCH) $(APP) $(VERIFY)),$(strip $(BENCH) $(APP) $(VERIFY)),아직 없음)"

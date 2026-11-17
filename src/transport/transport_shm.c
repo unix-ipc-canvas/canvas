@@ -31,7 +31,7 @@
  *   대가로 메시지 하나에 semop 시스템 콜이 보내는 쪽 2번, 받는 쪽 2번 든다. 작은 메시지에서는 이 비용이 드러난다.
  * DECISION: payload 는 링에 한 번, 링에서 받는 쪽 버퍼로 한 번 복사한다. transport.h 가 받는 쪽 버퍼에 통째로
  *   담아 주는 약속이라 복사를 없앨 수는 없다. 그 대신 메시지 전체가 링에 들어가므로 큰 메시지도 조각내지 않는다.
- * DECISION: 링 크기는 가장 큰 메시지(머리 + 1MB)를 요청 링에 4개, 응답 링에 2개 담을 수 있게 잡는다.
+ * DECISION: 링 크기는 가장 큰 메시지(머리 + MAX_PAYLOAD)를 요청 링에 4개, 응답 링에 2개 담을 수 있게 잡는다.
  *   환경 변수 OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS 로 서버를 띄울 때 바꿀 수 있다 (메모리 실험용).
  */
 #define _GNU_SOURCE             /* semtimedop, F_OFD_SETLK, F_OFD_GETLK */

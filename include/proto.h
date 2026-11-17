@@ -1,8 +1,10 @@
 /*
  * proto.h - 공유 캔버스 서버 메시지 형식 (세 IPC 버전 공통)
  *
- * 초안입니다. 11/13까지 팀이 확정한 뒤에는 바꿀 때 반드시 세 사람이 합의합니다.
- * 모든 메시지는 msg_hdr_t 로 시작하고, 그 뒤에 payload_len 바이트가 붙습니다.
+ * 11/18 확정 (#4). 바꿀 때는 owner 가 승인한 PR 로만 바꾼다 (docs/CONTRIBUTING.md 의 PR 절).
+ * 모든 메시지는 msg_hdr_t 로 시작하고, 그 뒤에 payload_len 바이트가 붙는다.
+ * 응답 payload 는 항상 srv_ts_t 로 시작한다. SNAPSHOT 응답은 그 뒤에 영역의 w × h 바이트가 붙는다.
+ * 타일(락 단위)은 서버 내부의 실행 옵션이라 여기 두지 않는다 (include/canvas.h).
  */
 #ifndef PROTO_H
 #define PROTO_H
@@ -11,16 +13,11 @@
 
 #define CANVAS_W   1024u            /* 가로 칸 수 */
 #define CANVAS_H   1024u            /* 세로 칸 수, 한 칸 1바이트 → 전체 1MB */
-#define TILE_SIZE  64u              /* 락 단위 구역 한 변 */
-#define TILE_COLS  (CANVAS_W / TILE_SIZE)
-#define TILE_ROWS  (CANVAS_H / TILE_SIZE)
-#define TILE_COUNT (TILE_COLS * TILE_ROWS)   /* 256 */
 
 #define MAX_CLIENTS 16u
-#define MAX_PAYLOAD (CANVAS_W * CANVAS_H)    /* 가장 큰 응답 = 캔버스 전체 */
 
 enum msg_type {
-    REQ_HELLO    = 1,   /* 클라이언트 등록 */
+    REQ_HELLO    = 1,   /* 클라이언트 등록. 클라이언트의 첫 요청이다 (transport.h 의 약속) */
     REQ_DRAW     = 2,   /* 사각형 영역의 각 칸에 v 더하기 (mod 256) */
     REQ_SNAPSHOT = 3,   /* 사각형 영역 복사해서 받기 */
     REQ_STATS    = 4,   /* 서버 통계 받기 */
@@ -33,8 +30,8 @@ enum msg_type {
 typedef struct {
     uint32_t type;          /* enum msg_type */
     uint32_t client_id;     /* 0 .. MAX_CLIENTS-1 */
-    uint64_t req_id;        /* 클라이언트가 붙이는 일련번호, 응답에 그대로 돌아옴 */
-    uint32_t payload_len;   /* 머리 뒤에 붙는 바이트 수 */
+    uint64_t req_id;        /* 클라이언트가 붙이는 일련번호, 응답에 그대로 돌아옴. 시작값은 세션마다 다르게 */
+    uint32_t payload_len;   /* 머리 뒤에 붙는 바이트 수. MAX_PAYLOAD 이하 */
     uint32_t reserved;
 } msg_hdr_t;
 
@@ -74,5 +71,20 @@ typedef struct {
     uint32_t n_clients;
     uint32_t n_workers;
 } stats_resp_t;
+
+/*
+ * payload 의 최대 크기 = 가장 큰 응답 = 캔버스 전체 SNAPSHOT (서버 시각 32B + 1MB = 1048608B).
+ * 1단계 echo 벤치마크의 메시지도 이 크기까지다. 세 전송 계층은 이 크기를 모두 보내고 받는다.
+ */
+#define MAX_PAYLOAD ((uint32_t)(sizeof(srv_ts_t) + CANVAS_W * CANVAS_H))
+
+/* 컴파일할 때 확인하는 약속. 어기면 빌드가 실패한다 */
+_Static_assert(sizeof(msg_hdr_t) == 24, "msg_hdr_t 는 24B 다. 전송 계층과 측정이 이 크기를 가정한다");
+_Static_assert(sizeof(srv_ts_t) == 32, "srv_ts_t 는 32B 다");
+_Static_assert(sizeof(draw_req_t) == 16 && sizeof(snap_req_t) == 8, "요청 payload 크기");
+_Static_assert(sizeof(msg_hdr_t) + sizeof(draw_req_t) <= 512,
+               "응용의 요청은 POSIX 가 보장하는 최소 PIPE_BUF(512B) 이하다. 그래서 FIFO 에 write 한 번으로 섞이지 않고 써진다");
+_Static_assert(CANVAS_W <= 65535 && CANVAS_H <= 65535, "좌표와 크기는 uint16_t 에 담긴다");
+_Static_assert(CANVAS_W * CANVAS_H == 1048576u, "캔버스는 1MB 다 (요구사항 F-1)");
 
 #endif /* PROTO_H */
