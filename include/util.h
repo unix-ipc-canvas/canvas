@@ -53,7 +53,7 @@ long vm_hwm_kb(void);
 /* 열 순서의 원본은 docs/measurement/README.md#원자료-형식 이다. 바꾸면 그 문서부터 고친다 */
 #define CSV_HEADER \
     "stage,ipc,role,experiment,commit,run," \
-    "msg_size,clients,inflight,workers,lock,draw_pct,rect,snap," \
+    "msg_size,clients,inflight,workers,lock,tile,draw_pct,rect,snap," \
     "n,elapsed_s,lat_mean_us,lat_p50_us,lat_p99_us,lat_max_us,thr_msg_s,thr_mb_s," \
     "req_us,queue_us,lock_us,work_us,resp_us," \
     "utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb"
@@ -67,6 +67,7 @@ typedef struct {
     long   run;
     long   msg_size, clients, inflight, workers;
     const char *lock;
+    long   tile;                       /* 서버 -t 타일 한 변 */
     long   draw_pct, rect, snap;
     long   n;
     double elapsed_s;
@@ -82,6 +83,7 @@ void csv_row_init(csv_row_t *r);
 /*
  * path 에 한 줄을 덧붙인다. 파일이 비어 있으면 머리글부터 쓴다.
  * 여러 프로세스가 같은 파일에 써도 줄이 섞이지 않게 쓰는 동안 파일 잠금(flock)을 건다.
+ * 머리글이 CSV_HEADER 와 다른 파일에는 쓰지 않는다 (errno = EBADMSG).
  * 측정 구간 밖에서만 부른다. 성공 0, 실패 -1.
  */
 int csv_append(const char *path, const csv_row_t *r);

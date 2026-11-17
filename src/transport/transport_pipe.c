@@ -217,6 +217,10 @@ static ssize_t recv_msg(int fd, msg_hdr_t *hdr, void *payload, size_t cap)
 
 const char *tp_name(void) { return "pipe"; }
 
+/* fork 로 함께 띄울 때의 준비. FIFO 는 경로 이름으로 만나므로 할 일이 없다 */
+int  tp_prefork(void)  { return 0; }
+void tp_postfork(void) { }
+
 /* ================================================================
  * 서버 쪽
  * ================================================================ */

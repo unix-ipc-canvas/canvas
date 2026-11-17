@@ -31,7 +31,7 @@
  *   대가로 메시지 하나에 semop 시스템 콜이 보내는 쪽 2번, 받는 쪽 2번 든다. 작은 메시지에서는 이 비용이 드러난다.
  * DECISION: payload 는 링에 한 번, 링에서 받는 쪽 버퍼로 한 번 복사한다. transport.h 가 받는 쪽 버퍼에 통째로
  *   담아 주는 약속이라 복사를 없앨 수는 없다. 그 대신 메시지 전체가 링에 들어가므로 큰 메시지도 조각내지 않는다.
- * DECISION: 링 크기는 가장 큰 메시지(머리 + 1MB)를 요청 링에 4개, 응답 링에 2개 담을 수 있게 잡는다.
+ * DECISION: 링 크기는 가장 큰 메시지(머리 + MAX_PAYLOAD)를 요청 링에 4개, 응답 링에 2개 담을 수 있게 잡는다.
  *   환경 변수 OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS 로 서버를 띄울 때 바꿀 수 있다 (메모리 실험용).
  */
 #define _GNU_SOURCE             /* semtimedop, F_OFD_SETLK, F_OFD_GETLK */
@@ -296,6 +296,10 @@ static size_t resp_stride(const geom_t *g)   { return sizeof(ring_hdr_t) + (size
 static size_t resp_seg_size(const geom_t *g) { return resp_stride(g) * MAX_CLIENTS; }
 
 const char *tp_name(void) { return "shm"; }
+
+/* fork 로 함께 띄울 때의 준비. 공유 메모리와 세마포어는 key 로 만나므로 할 일이 없다 */
+int  tp_prefork(void)  { return 0; }
+void tp_postfork(void) { }
 
 /* ================================================================
  * 서버 쪽
@@ -579,7 +583,7 @@ static void cli_server_gone(void)
  * MUTEX 를 쥐고 하므로 서버가 이 링에 쓰는 중이면 끝나기를 기다린다.
  * 한계: 예전 클라이언트가 보낸 요청을 서버가 아직 처리하고 있었다면, 그 응답은 비운 뒤에 들어와 새 클라이언트가 받는다.
  *   kill -9 된 클라이언트의 번호를 곧바로 다시 쓸 때만 생기며 FIFO 버전도 같다. 받는 쪽은 자기가 보내지 않은
- *   req_id 의 응답을 버려야 한다 (임시 검사에서 세션마다 req_id 시작값을 달리해 확인).
+ *   req_id 의 응답을 버려야 한다 (transport.h 의 약속. 세션마다 req_id 시작값을 다르게 한다).
  */
 static int reset_my_ring(void)
 {

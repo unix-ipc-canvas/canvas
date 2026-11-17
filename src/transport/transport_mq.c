@@ -253,6 +253,10 @@ static void watch_stop(watch_t *w)
 
 const char *tp_name(void) { return "mq"; }
 
+/* fork 로 함께 띄울 때의 준비. 메시지 큐는 key 로 만나므로 할 일이 없다 */
+int  tp_prefork(void)  { return 0; }
+void tp_postfork(void) { }
+
 /* ================================================================
  * 서버 쪽
  * ================================================================ */

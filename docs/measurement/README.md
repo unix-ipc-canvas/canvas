@@ -111,6 +111,21 @@ sequenceDiagram
 
 `scripts/bench.sh` 가 위 조합을 모두 돌린다. 커밋하지 않은 코드 변경이 있으면 멈춘다. 그래프와 요약표는 `scripts/plot-bench.py` 가 `docs/assets/bench/` 에 만든다.
 
+## 2단계 실험
+
+기준 조건은 [성능 예측](../records/prediction.md)의 워크로드 명세를 따른다. 기준에서 요인 하나만 바꿔 가며 잰다. 실행 스크립트와 반복 횟수는 서버·클라이언트를 구현하면서 정해 이 절에 적는다.
+
+| 실험 | 바꾸는 요인 | 값 | 보려는 것 |
+| --- | --- | --- | --- |
+| IPC 비교 | IPC 버전 | pipe, mq, shm | 예측(P1~P6)이 맞는지 |
+| 클라이언트 수 | 동시에 띄우는 클라이언트 수 | 1, 2, 4, 8 | 경쟁이 늘 때 IPC마다 처리량이 어떻게 변하는지 |
+| 워커 수 | 서버 `-w` | 1, 2, 4, 8 | 스레드를 늘린 효과와 한계. 강의(멀티스레드 설계 방법)가 권하는 스레드 수별 측정이다. 클라이언트는 8개로 둔다 |
+| 락 방식 | 서버 `-l` | `global`, `tile`, `tile-rw` | 락 대기 구간이 얼마나 줄어드는지 |
+| 타일 크기 | 서버 `-t` | 16, 64, 256, 1024 | 잠금 분할도. `-l tile`에서만 잰다. 1024는 타일이 1개라 전역 락과 단위가 같다 |
+
+- 스레드 수(클라이언트 × 3 + 서버 워커 + 2)가 측정용 컴퓨터의 논리 CPU 12개를 넘는 조합은 표에 그 사실을 함께 적는다. 넘는 지점에서 처리량이 꺾이면 IPC보다 CPU 부족이 원인일 수 있다.
+- 모든 실행에서 구간별 시간, CPU 시간, 컨텍스트 스위치를 함께 남겨 원인 분석에 쓴다.
+
 ## 지연과 처리량
 
 | 지표 | 재는 방법 |
@@ -157,7 +172,7 @@ sequenceDiagram
 
 ```text
 stage,ipc,role,experiment,commit,run,
-msg_size,clients,inflight,workers,lock,draw_pct,rect,snap,
+msg_size,clients,inflight,workers,lock,tile,draw_pct,rect,snap,
 n,elapsed_s,lat_mean_us,lat_p50_us,lat_p99_us,lat_max_us,thr_msg_s,thr_mb_s,
 req_us,queue_us,lock_us,work_us,resp_us,
 utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
@@ -166,8 +181,9 @@ utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
 - `stage`는 `bench` 또는 `app`, `ipc`는 `pipe`·`mq`·`shm`, `role`은 `server` 또는 `client`.
 - `experiment`는 실험 이름이다. 1단계는 `latency`(동시 요청 1), `throughput`(동시 요청 16), `clock`(clock_gettime 비용, `ipc` 칸이 비어 있다).
 - `commit`은 측정한 코드의 커밋, `run`은 같은 조건의 반복 번호, `elapsed_s`는 측정 구간의 길이(초)다.
+- `workers`, `lock`, `tile`은 서버 옵션 `-w`, `-l`, `-t`의 값이다.
 - 해당 없는 칸은 비운다. 1단계에는 `workers`부터 `snap`까지와 구간별 시간이 없다.
-- 클라이언트 프로세스 여럿이 같은 파일에 써도 줄이 섞이지 않게 `csv_append`(`util.c`)가 파일 잠금을 걸고 쓴다. 2단계 `client.c`도 이 함수를 쓴다.
+- 클라이언트 프로세스 여럿이 같은 파일에 써도 줄이 섞이지 않게 `csv_append`(`util.c`)가 파일 잠금을 걸고 쓴다. 2단계 `client.c`도 이 함수를 쓴다. 머리글이 다른 파일(열을 바꾸기 전에 잰 결과)에는 덧붙이지 않고 실패한다.
 - 1단계 파일: `results/bench_latency.csv`, `results/bench_throughput.csv`, `results/bench_clock.csv`, 측정 환경 `results/bench_env.txt`.
 - 그래프는 이 CSV에서만 만든다. 축 이름과 단위(µs, ms, MB/s)를 표시하고, 같은 조건의 세 IPC를 한 그래프에 그린다.
 
