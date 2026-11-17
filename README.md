@@ -24,7 +24,8 @@ canvas/
 ├── src/
 │   ├── transport/    # IPC별 전송 계층 (pipe, mq, shm, 벤치마크 전용 익명 pipe upipe)
 │   ├── common/       # 캔버스, 서버, 클라이언트, 검증기
-│   └── bench/        # 1단계 echo 벤치마크
+│   ├── bench/        # 1단계 echo 벤치마크
+│   └── test/         # 전송 계층 시험 도구
 ├── scripts/          # 검증·측정 스크립트
 ├── results/          # 측정 원자료 CSV
 └── docs/
@@ -127,7 +128,15 @@ python3 scripts/plot-bench.py     # docs/assets/bench/ 에 그래프와 요약�
 make test
 ```
 
-문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다.
+문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다. 우리 서버가 떠 있지 않을 때 돌린다.
+
+전송 계층 시험(T-04)만 따로 돌리거나 새니타이저로 돌릴 수 있다.
+
+```bash
+make && scripts/test-transport.sh shm              # 고른 IPC 만 (생략하면 셋 다)
+make clean && make EXTRA_CFLAGS='-fsanitize=address,undefined' && scripts/test-transport.sh
+make clean && make EXTRA_CFLAGS='-fsanitize=thread' && scripts/test-transport.sh
+```
 
 ## 관련 문서
 
