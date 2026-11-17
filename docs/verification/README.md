@@ -16,7 +16,7 @@
 | --- | --- | --- | --- |
 | T-00 | 문서 관리 | 문서의 링크가 살아 있고, 모든 요구사항 번호가 이 명세에 대응되며, 이 명세와 `verify.sh`의 번호가 같고, 예측 전에 서버·클라이언트 구현이 없다 | [check-docs.py](../../scripts/check-docs.py) |
 | T-01 | C-1, C-7 | `make` 전체 빌드가 경고 없이 통과한다 | `make EXTRA_CFLAGS=-Werror` |
-| T-02 | C-7 | `make pipe`, `make mq`, `make shm`이 각각 그 버전만 빌드한다 | 버전마다 빈 상태에서 빌드 |
+| T-02 | C-7 | `make pipe`, `make mq`, `make shm`, `make upipe`(벤치마크만)가 각각 그 버전만 빌드한다 | 버전마다 빈 상태에서 빌드 |
 | T-03 | C-6 | `src/common/`, `src/bench/`에 IPC 고유 호출이 없다 | `msgsnd`, `shmat`, `mkfifo` 등을 검색 |
 
 ### 동작과 정합성

@@ -90,7 +90,7 @@ sequenceDiagram
 
 ## 1단계 벤치마크
 
-`src/bench/bench.c` 하나가 세 IPC에 링크되어 `bin/bench_<ipc>` 가 된다. 한 번 실행하면 조건 하나를 재고 CSV에 두 줄(client, server)을 붙인다. 실행 옵션은 [README의 사용 방법](../../README.md#사용-방법)에 있다.
+`src/bench/bench.c` 하나가 각 IPC에 링크되어 `bin/bench_<ipc>` 가 된다. 한 번 실행하면 조건 하나를 재고 CSV에 두 줄(client, server)을 붙인다. 실행 옵션은 [README의 사용 방법](../../README.md#사용-방법)에 있다.
 
 | 항목 | 정한 것 | 이유 |
 | --- | --- | --- |
@@ -99,6 +99,7 @@ sequenceDiagram
 | 스레드 | 서버 echo·admin·stats + main, 클라이언트 send·recv·stats + main | 과제 조건(프로세스마다 3개 이상)을 벤치에도 지킨다 |
 | HELLO | 측정 메시지와 같은 크기로 보낸다 | pipe 버전은 `PIPE_BUF` 이하 요청을 잠금 없이 쓰므로 크기가 섞이면 요청 스트림이 섞인다 |
 | 측정 시작 | 모든 클라이언트가 워밍업 응답을 다 받은 뒤 조정 프로세스가 실시간 신호로 한꺼번에 시작시킨다 | 클라이언트 수별 측정에서 모두가 같은 시간대에 경쟁하게 한다 |
+| IPC | pipe(FIFO), upipe(익명 pipe), mq, shm | 강의 5장의 pipe 두 가지를 모두 잰다. upipe는 채널 구조가 FIFO 버전과 같고 이름이 있는지만 다르다. 세 IPC의 순위 비교는 pipe, mq, shm으로 한다 |
 | 메시지 크기 | 64B, 1KB, 4KB, 16KB, 64KB, 256KB, 1MB (payload) | 과제 최소 5단계에 `PIPE_BUF`(4KB)와 `msgmax`(8KB) 앞뒤를 더했다 |
 | 클라이언트 수 | 1, 2, 4, 8 | 과제 조건 |
 | 표본 수 (클라이언트 합) | 16KB 이하 20,000, 64KB 10,000, 256KB 4,000, 1MB 1,000 | 큰 메시지는 실행 시간을 줄이고, 작은 메시지는 상위 99%가 뜻을 갖게 |
@@ -178,7 +179,7 @@ req_us,queue_us,lock_us,work_us,resp_us,
 utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
 ```
 
-- `stage`는 `bench` 또는 `app`, `ipc`는 `pipe`·`mq`·`shm`, `role`은 `server` 또는 `client`.
+- `stage`는 `bench` 또는 `app`, `ipc`는 `pipe`·`mq`·`shm`(1단계는 `upipe`도), `role`은 `server` 또는 `client`.
 - `experiment`는 실험 이름이다. 1단계는 `latency`(동시 요청 1), `throughput`(동시 요청 16), `clock`(clock_gettime 비용, `ipc` 칸이 비어 있다).
 - `commit`은 측정한 코드의 커밋, `run`은 같은 조건의 반복 번호, `elapsed_s`는 측정 구간의 길이(초)다.
 - `workers`, `lock`, `tile`은 서버 옵션 `-w`, `-l`, `-t`의 값이다.

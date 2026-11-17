@@ -22,7 +22,7 @@ canvas/
 ├── readme.txt        # 제출용 readme
 ├── include/          # proto.h, transport.h
 ├── src/
-│   ├── transport/    # IPC별 전송 계층 (pipe, mq, shm)
+│   ├── transport/    # IPC별 전송 계층 (pipe, mq, shm, 벤치마크 전용 익명 pipe upipe)
 │   ├── common/       # 캔버스, 서버, 클라이언트, 검증기
 │   └── bench/        # 1단계 echo 벤치마크
 ├── scripts/          # 검증·측정 스크립트
@@ -83,11 +83,11 @@ make
 | `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
 > [!NOTE]
-> 지금은 전송 계층 3개와 1단계 벤치마크가 있다. 서버·클라이언트·검증기는 아직 없어 `make app`은 아무것도 만들지 않는다.
+> 지금은 전송 계층 3개(+ 벤치마크 전용 익명 pipe)와 1단계 벤치마크가 있다. 서버·클라이언트·검증기는 아직 없어 `make app`은 아무것도 만들지 않는다.
 
 ## 사용 방법
 
-`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 서버·클라이언트 옵션의 초안은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
+`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 1단계 벤치마크에는 강의 5장의 익명 pipe로 만든 `bench_upipe`도 있다. 익명 pipe는 fork로 물려받아야 이어지므로 서버·클라이언트는 만들지 않는다. 서버·클라이언트 옵션의 초안은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
 
 ### 1단계 벤치마크
 
@@ -112,7 +112,7 @@ make bench
 | `-V` | 모든 응답의 내용을 검사한다 |
 | `-K` | `clock_gettime` 비용만 잰다 |
 
-1단계 전체 측정은 측정용 컴퓨터에서 다른 무거운 작업을 멈추고 돌린다(약 15분). 코드를 커밋한 뒤에만 돈다.
+1단계 전체 측정은 측정용 컴퓨터에서 다른 무거운 작업을 멈추고 돌린다(약 20분). 코드를 커밋한 뒤에만 돈다.
 
 ```bash
 scripts/bench.sh                  # results/bench_*.csv, results/bench_env.txt

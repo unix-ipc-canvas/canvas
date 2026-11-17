@@ -1,9 +1,9 @@
 # 공유 캔버스 서버 - UNIX시스템프로그래밍 설계과제
 #
 #   make            전체 빌드 (소스가 있는 것만)
-#   make bench      1단계 벤치마크 3종
+#   make bench      1단계 벤치마크 (pipe, mq, shm, 익명 pipe upipe)
 #   make app        2단계 응용 (서버, 클라이언트) 3종
-#   make pipe       pipe 버전만   (mq, shm 도 같음)
+#   make pipe       pipe 버전만   (mq, shm, upipe 도 같음. upipe 는 벤치마크만)
 #   make check      헤더 문법 검사 + 빌드 가능한 대상 출력
 #   make test       검증 스크립트 실행 (scripts/verify.sh)
 #   make ipcclean   남은 System V 자원과 FIFO 강제 삭제
@@ -19,6 +19,8 @@ CFLAGS  += -pthread -Iinclude -DTEAM_NO=$(TEAM_NO) $(EXTRA_CFLAGS)
 LDLIBS  += -pthread
 
 IPCS := pipe mq shm
+# 1단계 벤치마크만 만드는 IPC. 익명 pipe 는 fork 로만 이어져 따로 띄우는 서버·클라이언트에는 쓸 수 없다
+BENCH_ONLY := upipe
 BIN  := bin
 OBJ  := build
 
@@ -29,7 +31,8 @@ COMMON_OBJ := $(COMMON_SRC:%.c=$(OBJ)/%.o)
 
 # 소스가 있는 것만 빌드 대상에 넣는다 (뼈대 단계에서도 make 가 실패하지 않게)
 HAVE   := $(foreach i,$(IPCS),$(if $(wildcard src/transport/transport_$(i).c),$(i)))
-BENCH  := $(if $(wildcard src/bench/bench.c),$(HAVE:%=$(BIN)/bench_%))
+HAVE_B := $(HAVE) $(foreach i,$(BENCH_ONLY),$(if $(wildcard src/transport/transport_$(i).c),$(i)))
+BENCH  := $(if $(wildcard src/bench/bench.c),$(HAVE_B:%=$(BIN)/bench_%))
 APP    := $(if $(wildcard src/common/server.c),$(HAVE:%=$(BIN)/server_%)) \
           $(if $(wildcard src/common/client.c),$(HAVE:%=$(BIN)/client_%))
 VERIFY := $(if $(wildcard src/common/verify.c),$(BIN)/verify)
@@ -52,7 +55,7 @@ $$(BIN)/server_$(1): $$(OBJ)/src/common/server.o $$(OBJ)/src/transport/transport
 $$(BIN)/client_$(1): $$(OBJ)/src/common/client.o $$(OBJ)/src/transport/transport_$(1).o $$(COMMON_OBJ) | $$(BIN)
 	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
 endef
-$(foreach i,$(IPCS),$(eval $(call IPC_RULES,$(i))))
+$(foreach i,$(IPCS) $(BENCH_ONLY),$(eval $(call IPC_RULES,$(i))))
 
 $(BIN)/verify: $(OBJ)/src/common/verify.o $(COMMON_OBJ) | $(BIN)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
@@ -67,7 +70,7 @@ $(BIN):
 check:
 	@for h in include/*.h; do $(CC) $(CFLAGS) -fsyntax-only -x c $$h || exit 1; done
 	@echo "헤더 검사 통과 (TEAM_NO=$(TEAM_NO))"
-	@echo "전송 계층 구현: $(if $(strip $(HAVE)),$(strip $(HAVE)),아직 없음)"
+	@echo "전송 계층 구현: $(if $(strip $(HAVE_B)),$(strip $(HAVE_B)),아직 없음)"
 	@echo "빌드 대상: $(if $(strip $(BENCH) $(APP) $(VERIFY)),$(strip $(BENCH) $(APP) $(VERIFY)),아직 없음)"
 
 test:

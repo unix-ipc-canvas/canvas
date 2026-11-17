@@ -26,6 +26,7 @@ canvas/
 | `src/transport/transport_pipe.c` | FIFO 구현 | pipe 담당 |
 | `src/transport/transport_mq.c` | System V message queue 구현. 큰 메시지 분할·재조립 | mq 담당 |
 | `src/transport/transport_shm.c` | System V shared memory + semaphore 구현 | shm 담당 |
+| `src/transport/transport_upipe.c` | 익명 pipe 구현. 1단계 벤치마크 전용 | 측정 담당 |
 | `src/common/canvas.c` | 캔버스, 타일 락, PGM 저장, 체크섬 | 서버 담당 |
 | `src/common/server.c` | 수신·워커·관리 스레드, 작업 큐, 종료 처리 | 서버 담당 |
 | `src/common/client.c` | 송신·수신·통계 스레드, 워크로드 생성기, CSV 출력 | 클라이언트 담당 |
@@ -93,7 +94,7 @@ gantt
 
 | 항목 | 상태 | 재개 조건 |
 | --- | --- | --- |
-| FIFO를 pipe 버전으로 인정하는지 | 미확인 | 교수님 답변. 인정하지 않으면 서버가 `fork`한 클라이언트와 익명 pipe로 잇는 구조를 다시 설계한다 |
+| FIFO를 pipe 버전으로 인정하는지 | 미확인 | 교수님 답변. 1단계는 익명 pipe(`upipe`)도 함께 잰다(#25). 인정하지 않으면 2단계를 서버가 `fork`한 클라이언트와 익명 pipe로 잇는 구조로 다시 설계하고 `transport_upipe.c`에서 시작한다 |
 | System V 메시지 한도(`msgmax`, `msgmnb`)를 올려서 잴지 | 미결정 | 1단계에서 기본값과 상향값을 모두 재 보고 정한다. 이유를 보고서에 쓴다. 상향값은 `sysctl`에 관리자 권한이 필요해 측정용 컴퓨터 주인이 직접 올린다 |
 
 | 실패 | 점검 |

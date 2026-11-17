@@ -24,6 +24,7 @@
  * DECISION: 서버는 받은 스레드에서 바로 돌려준다. 작업 큐와 워커를 거치면 스레드 깨우기 비용이 섞여
  *   IPC 자체의 차이가 가려진다. 큐·워커 비용은 2단계 응용에서 구간별 시간으로 따로 잰다.
  * DECISION: 벤치 전용 메시지 종류(BENCH_ECHO)는 이 파일 안에 둔다. 응용 프로토콜이 아니므로 proto.h 를 바꾸지 않는다.
+ * fork 앞뒤에 tp_prefork, tp_postfork 를 부른다. 익명 pipe 버전(bench_upipe)이 채널을 물려주는 자리다.
  */
 #include <errno.h>
 #include <inttypes.h>
@@ -795,6 +796,16 @@ static int run_driver(const cfg_t *cfg)
     if (!ch || !ready) { fprintf(stderr, "bench: 메모리 부족\n"); return 1; }
     fflush(NULL);
 
+    /* 익명 pipe 버전은 여기서 채널을 만들어 자식에게 물려준다. 다른 버전은 아무것도 하지 않는다 */
+    if (tp_prefork() < 0) {
+        char eb[128];
+        fprintf(stderr, "bench: tp_prefork: %s\n", err_str(errno, eb, sizeof eb));
+        remove_dir(dir, cfg->clients);
+        free(ch);
+        free(ready);
+        return 1;
+    }
+
     /* ch[0] 은 서버, ch[1..] 은 클라이언트다. fork 가 실패하면 나머지는 띄우지 않고 (pid 0) 실패로 끝낸다 */
     int rc = 0;
     for (unsigned i = 0; i < cnt; i++) {
@@ -811,6 +822,7 @@ static int run_driver(const cfg_t *cfg)
         }
         ch[i].pid = p;
     }
+    tp_postfork();      /* 조정 프로세스가 쥔 채널 끝을 닫는다. 그래야 한쪽이 끝났을 때 상대가 EOF·EPIPE 로 안다 */
 
     if (rc == 0 && wait_ready(ch, cnt, ready, cfg->clients, false, RUN_SEC) < 0) {
         fprintf(stderr, "bench: 클라이언트가 준비되지 못했다\n");

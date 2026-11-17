@@ -29,7 +29,7 @@ fi
 
 # T-02 IPC 버전별 따로 빌드
 ipcs_have=""
-for i in pipe mq shm; do [ -f "src/transport/transport_$i.c" ] && ipcs_have="$ipcs_have $i"; done
+for i in pipe mq shm upipe; do [ -f "src/transport/transport_$i.c" ] && ipcs_have="$ipcs_have $i"; done
 if [ -z "$ipcs_have" ]; then
     sk T-02 "버전별 빌드: 전송 계층 소스 없음"
 else
