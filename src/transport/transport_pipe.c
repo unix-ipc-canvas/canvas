@@ -277,6 +277,8 @@ fail:;
     return -1;
 }
 
+static int open_resp(uint32_t id);
+
 /* 클라이언트 id 의 응답 FIFO 쓰기 끝을 닫는다. 호출하는 쪽이 srv_resp_mtx[id] 를 잡고 있어야 한다 */
 static void drop_resp_locked(uint32_t id)
 {
@@ -300,14 +302,19 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
     if (hdr->type == WAKE_TYPE) { errno = ECANCELED; return -1; }
 
     /*
-     * 같은 번호로 새 클라이언트가 들어오면 예전 클라이언트의 응답 FIFO 에 열어 둔 fd 를 버린다.
-     * 다음 응답 때 새 FIFO 를 연다. 그래서 REQ_HELLO 는 클라이언트의 첫 요청이어야 한다.
-     * (응답을 받은 뒤에 HELLO 를 보내면 서버가 쓰기 끝을 닫는 순간 클라이언트 수신이 EOF 를 받는다.)
+     * 같은 번호로 새 클라이언트가 들어오면 응답 FIFO 의 쓰기 끝을 새 FIFO 로 바꾼다.
+     * 새 쓰기 끝을 먼저 연 뒤 예전 것을 닫는다. 순서가 반대면 쓰는 쪽이 0개가 되는 순간이 생긴다:
+     *   예전 세션의 응답이 tp_send_resp 의 재시도로 HELLO 보다 먼저 새 FIFO 에 들어가면, 클라이언트는 그 응답을
+     *   받으면서 keeper 를 닫는다. 그때 서버 쪽 쓰기 끝까지 닫으면 클라이언트 수신이 EOF(ECONNRESET)를 받는다 (#36).
+     * 새 FIFO 를 열지 못하면(클라이언트가 이미 끝남) 예전 것만 닫고, 다음 응답 때 다시 열어 본다.
      */
     if (hdr->type == REQ_HELLO && hdr->client_id < MAX_CLIENTS) {
-        pthread_mutex_lock(&srv_resp_mtx[hdr->client_id]);
-        drop_resp_locked(hdr->client_id);
-        pthread_mutex_unlock(&srv_resp_mtx[hdr->client_id]);
+        uint32_t id = hdr->client_id;
+        pthread_mutex_lock(&srv_resp_mtx[id]);
+        int fresh = open_resp(id);
+        drop_resp_locked(id);
+        srv_resp_fd[id] = fresh;
+        pthread_mutex_unlock(&srv_resp_mtx[id]);
     }
     return n;
 }
