@@ -85,13 +85,24 @@ else
     fi
 fi
 
-# T-10 ~ T-41 실행 검사: 서버·클라이언트 구현 뒤 이 자리에 추가한다
+# T-40 1단계 원자료의 조합, T-41 CSV 열. 측정용 컴퓨터에서 만든 results/ 의 원자료를 검사한다
+for t in T-40 T-41; do
+    python3 scripts/check-results.py "$t" >"$log" 2>&1
+    rc=$?
+    case $rc in
+        0) ok "$t" "$(head -1 "$log")" ;;
+        2) sk "$t" "$(head -1 "$log")" ;;
+        *) ng "$t" "$(head -1 "$log")"; tail -n +2 "$log" ;;
+    esac
+done
+
+# T-10 ~ T-31 실행 검사: 서버·클라이언트 구현 뒤 이 자리에 추가한다
 if ! ls bin/server_* >/dev/null 2>&1; then
-    for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-21 T-22 T-30 T-31 T-40 T-41; do
+    for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-21 T-22 T-30 T-31; do
         sk "$t" "실행 파일 없음 (구현 전)"
     done
 else
-    for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-21 T-22 T-30 T-31 T-40 T-41; do
+    for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-21 T-22 T-30 T-31; do
         sk "$t" "검사 코드 미작성"
     done
 fi
