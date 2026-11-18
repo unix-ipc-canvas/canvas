@@ -5,6 +5,12 @@
  * 클라이언트는 이 요청을 서버에 보내고, 검증기는 같은 시드들의 요청을 스레드 하나로 다시 그려 정답 체크섬을 낸다(F-10).
  * 워크로드의 뜻과 기준값은 docs/records/prediction.md 의 워크로드 명세가 원본이다.
  * IPC 고유 호출은 넣지 않는다 (src/common/ 규칙).
+ *
+ * 주의: 2단계 원자료(results/app_*.csv)를 재기 시작한 뒤에는 수열을 바꾸지 않는다.
+ *   난수 알고리즘(splitmix64), 요청마다 꺼내는 난수의 수와 순서, 좌표와 v 를 정하는 식이 모두 수열에 들어간다.
+ *   바꾸면 같은 시드와 옵션이라도 요청열이 달라져 이미 잰 결과와 비교할 수 없다.
+ *   꼭 바꿔야 하면 docs/design/README.md 의 변경 기록에 남기고 2단계를 처음부터 다시 잰다
+ *   (docs/design/README.md 의 캔버스와 락).
  */
 #ifndef WORKLOAD_H
 #define WORKLOAD_H
