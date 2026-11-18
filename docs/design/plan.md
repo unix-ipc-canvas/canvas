@@ -12,7 +12,7 @@
 canvas/
 ├── include/          proto.h, transport.h          (바꿀 때 owner 승인)
 ├── src/transport/    transport_{pipe,mq,shm}.c     (IPC 담당이 1개씩)
-├── src/common/       canvas, server, client, verify, util
+├── src/common/       canvas, server, client, verify, workload, util
 ├── src/bench/        bench.c                       (1단계 echo 벤치마크)
 ├── src/test/         tptest.c                      (전송 계층 시험 도구)
 ├── scripts/          측정 자동화, 그래프, verify.sh
@@ -30,7 +30,8 @@ canvas/
 | `src/transport/transport_upipe.c` | 익명 pipe 구현. 1단계 벤치마크 전용 | 측정 담당 |
 | `src/common/canvas.c` | 캔버스, 타일 락, PGM 저장, 체크섬 | 서버 담당 |
 | `src/common/server.c` | 수신·워커·관리 스레드, 작업 큐, 종료 처리 | 서버 담당 |
-| `src/common/client.c` | 송신·수신·통계 스레드, 워크로드 생성기, CSV 출력 | 클라이언트 담당 |
+| `src/common/client.c` | 송신·수신·통계 스레드, CSV 출력 | 클라이언트 담당 |
+| `src/common/workload.c`, `include/workload.h` | 시드와 옵션(`-m`, `-r`, `-S`)으로 요청열을 만든다. `client.c`와 `verify.c`가 같은 요청열을 만들도록 한 곳에 둔다 | 클라이언트 담당 |
 | `src/common/verify.c` | 정답 체크섬 계산 | 클라이언트 담당 |
 | `src/common/util.c` | 시각, 통계, `getrusage`, VmRSS | 측정 담당 |
 | `src/bench/bench.c` | 1단계 echo 벤치마크 | 측정 담당 |
