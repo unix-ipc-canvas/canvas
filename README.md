@@ -88,7 +88,7 @@ make
 
 ## 사용 방법
 
-`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 1단계 벤치마크에는 강의 5장의 익명 pipe로 만든 `bench_upipe`도 있다. 익명 pipe는 fork로 물려받아야 이어지므로 서버·클라이언트는 만들지 않는다. 서버·클라이언트 옵션의 초안은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
+`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 1단계 벤치마크에는 강의 5장의 익명 pipe로 만든 `bench_upipe`도 있다. 익명 pipe는 fork로 물려받아야 이어지므로 서버·클라이언트는 만들지 않는다. 서버·클라이언트 옵션의 뜻은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다(서버는 서버 담당이 적는다).
 
 ### 1단계 벤치마크
 
@@ -121,6 +121,34 @@ python3 scripts/plot-bench.py     # docs/assets/bench/ 에 그래프와 요약�
 ```
 
 `REPS`, `SIZES`, `CLIENTS`, `IPCS`, `INFLIGHT`, `OUT` 환경 변수로 일부만 돌릴 수 있다. 예: `REPS=1 SIZES="64 1048576" CLIENTS="1 8" OUT=/tmp/x scripts/bench.sh`
+
+### 2단계 클라이언트
+
+서버(`server_<ipc>`)를 먼저 띄운 뒤 같은 IPC의 클라이언트를 띄운다. 클라이언트는 워밍업 뒤 정해진 수의 요청을 보내고, 끝나면 통계(왕복 지연, 구간별 시간, 처리량, CPU 시간)를 stdout에 쓴다. `-o`를 주면 CSV에 한 줄(`stage=app`, `role=client`)을 덧붙인다. 재는 방법은 [2단계 실험](docs/measurement/README.md#2단계-실험)을 따른다.
+
+```bash
+make app
+./bin/client_mq -i 0                                   # 기준 조건: DRAW 90%, 사각형 16, SNAPSHOT 256, 요청 20000개, 지연 (동시 요청 1)
+for i in 0 1 2 3; do ./bin/client_shm -i $i -f 16 -c 4 -o /tmp/app.csv & done; wait   # 클라이언트 4개, 처리량
+./bin/client_pipe -i 0 -m 0 -S 1024 -n 500             # 캔버스 전체(1MB) SNAPSHOT만
+```
+
+| 옵션 | 뜻 (기본값) |
+| --- | --- |
+| `-i N` | 클라이언트 번호, 0~15 (0). 동시에 띄우는 클라이언트는 번호가 달라야 한다 |
+| `-s N` | 시드 (번호 + 1) |
+| `-n N` | 잴 요청 수 (20000) |
+| `-w N` | 워밍업 요청 수. DRAW의 v를 0으로 보내 캔버스를 바꾸지 않는다 (500) |
+| `-m N` | DRAW 비율 %, 나머지는 SNAPSHOT (90) |
+| `-r N`, `-S N` | DRAW 사각형 한 변, SNAPSHOT 영역 한 변, 1~1024 (16, 256) |
+| `-f N` | 동시에 띄워 둘 요청 수, 1~1024. 1이면 지연, 크면 처리량 (1) |
+| `-o F` | 결과 CSV 경로 |
+| `-e S`, `-R N`, `-C S` | CSV의 실험 이름(latency 또는 throughput), 반복 번호(1), 커밋(환경 변수 `BENCH_COMMIT`) |
+| `-c N`, `-L S`, `-T N` | CSV의 clients, lock, tile 칸. 서버 설정을 그대로 적는다. 동작은 바꾸지 않는다 |
+
+- 서버가 받는 요청은 클라이언트마다 HELLO 1 + 워밍업 `-w` + 측정 `-n` + STATS 1 + BYE 1개다. 워밍업은 캔버스를 바꾸지 않으므로 검증기는 측정 요청(시드, `-n`, `-m`, `-r`, `-S`)만 재생하면 된다.
+- Ctrl+C(SIGINT)나 SIGTERM을 받으면 새 요청을 멈추고, 띄워 둔 요청의 응답을 다 받은 뒤 그때까지의 통계를 쓰고 끝난다. 다 재지 못한 실행이라 CSV에 쓰지 않고 종료 코드 1로 끝난다.
+- 서버가 없거나, 같은 번호의 클라이언트가 실행 중이거나, 도중에 서버가 끝나면 stderr에 한 줄을 쓰고 종료 코드 1로 끝난다. 응답의 종류·길이·서버 시각 순서가 어긋나도 오류로 세어 종료 코드 1로 끝난다.
 
 ## 테스트
 
