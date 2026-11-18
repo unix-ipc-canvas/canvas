@@ -41,8 +41,16 @@ make -s clean >/dev/null && make -s bench >/dev/null || { echo "빌드 실패" >
 for i in $IPCS; do [ -x "bin/bench_$i" ] || { echo "bin/bench_$i 가 없다" >&2; exit 1; }; done
 make -s ipcclean >/dev/null
 
+# 측정할 때 CPU 를 쓰는 프로세스 (top 의 두 번째 표본: 1초 동안의 사용률, 많이 쓰는 순)
+cpu_snapshot() {
+    uptime
+    top -b -n 2 -d 1 -w 200 | awk '/^top -/{n++} n == 2' | sed -n '1,5p;7,19p'
+}
+
 # ---- 측정 환경 ----
+# 명령의 출력은 영어 기준으로 남긴다. 한국어 설정이면 lscpu 항목 이름이 바뀌어 plot-bench.py 가 읽지 못한다
 {
+    export LC_ALL=C
     echo "# scripts/bench.sh 가 측정을 시작할 때 기록한 환경"
     echo "date: $(date -Iseconds)"
     echo "commit: $commit"
@@ -52,7 +60,9 @@ make -s ipcclean >/dev/null
     echo; echo "## free -h"; free -h | head -2
     echo; echo "## os"; (. /etc/os-release && echo "$PRETTY_NAME"); uname -r
     echo; echo "## gcc"; gcc --version | head -1
-    echo; echo "## virtualization"; systemd-detect-virt 2>/dev/null || echo "(systemd-detect-virt 없음)"
+    # 가상화가 없으면 none 을 찍고 종료 코드 1 로 끝난다. 그래서 종료 코드가 아니라 명령이 있는지로 나눈다
+    echo; echo "## virtualization"
+    if command -v systemd-detect-virt >/dev/null; then systemd-detect-virt || true; else echo "(systemd-detect-virt 없음)"; fi
     echo; echo "## cpufreq governor"; cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c || echo "(없음)"
     echo; echo "## IPC 한도"
     echo "msgmax: $(cat /proc/sys/kernel/msgmax)"
@@ -62,6 +72,7 @@ make -s ipcclean >/dev/null
     echo "sem (SEMMSL SEMMNS SEMOPM SEMMNI): $(cat /proc/sys/kernel/sem)"
     echo "shmmax: $(cat /proc/sys/kernel/shmmax)"
     echo; echo "## ipcs -l"; ipcs -l
+    echo; echo "## 측정 시작 때 CPU 를 쓰는 프로세스 (끌 수 없는 프로그램 확인용)"; cpu_snapshot
 } > "$OUT/bench_env.txt"
 
 # ---- 측정 ----
@@ -103,7 +114,13 @@ for rep in $(seq "$REPS"); do
     echo "반복 $rep/$REPS 끝: $done_runs/$n_runs, $(( $(date +%s) - start ))초"
 done
 
-echo "측정 끝: $(( $(date +%s) - start ))초, 실패 $failed 번"
+elapsed=$(( $(date +%s) - start ))
+echo "측정 끝: ${elapsed}초, 실패 $failed 번"
+{
+    export LC_ALL=C
+    echo; echo "## 측정 끝: $(date -Iseconds), ${elapsed}초, 실행 $done_runs 번, 실패 $failed 번"
+    echo; echo "## 측정 끝 때 CPU 를 쓰는 프로세스"; cpu_snapshot
+} >> "$OUT/bench_env.txt"
 team=$(sed -n 's/^TEAM_NO ?= *//p' Makefile)
 left=""
 for y in 0 1 2 3 4 5 6 7 8 9; do
@@ -111,5 +128,6 @@ for y in 0 1 2 3 4 5 6 7 8 9; do
     ipcs -q -m -s 2>/dev/null | grep -qi "^$key" && left="$left $key"
 done
 left="$left $(ls /tmp/osproject_"${team}"_* 2>/dev/null | tr '\n' ' ')"
-echo "남은 IPC 자원과 파일: ${left// /}" | sed 's/: $/: 없음/'
+left=$(echo $left)                          # 공백 정리
+echo "남은 IPC 자원과 파일: ${left:-없음}"
 [ "$failed" -eq 0 ]

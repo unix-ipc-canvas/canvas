@@ -17,7 +17,7 @@
 | `docs/assignment/` | 과제 원문 3개와 [과제 핵심 정리](../assignment/README.md). 원문 파일은 수정하지 않는다 |
 | `docs/requirements/` | 요구사항(이 문서) |
 | `docs/design/` | [설계 명세](../design/README.md), [구현 계획](../design/plan.md) |
-| `docs/measurement/` | [측정 방법](../measurement/README.md) |
+| `docs/measurement/` | [측정 방법](../measurement/README.md), [1단계 측정 결과](../measurement/stage1.md) |
 | `docs/verification/` | [테스트 명세](../verification/README.md) |
 | `docs/submission/` | [최종보고서·제출 준비 기준](../submission/report.md), [최종 발표 준비 기준](../submission/presentation.md) |
 | `docs/records/` | 덧붙이기만 하는 기록: [성능 예측](../records/prediction.md), [AI 활용 기록](../records/ai-log.md), [작업 시간](../records/worklog.csv), AI 대화 기록(`ai-chats/`) |

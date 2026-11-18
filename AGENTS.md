@@ -13,6 +13,7 @@
 | `docs/design/plan.md` | 구조, 파일 책임, 단계별 계획, 미결정 |
 | `docs/design/README.md` | 채널, 스레드, 동기화, 실행 옵션, 종료 |
 | `docs/measurement/README.md` | 타임스탬프 위치, 통계, 원자료 형식 |
+| `docs/measurement/stage1.md` | 1단계 측정 기록과 결과 해석 |
 | `docs/verification/README.md` | 검증 범위·방법·판정 기준 |
 | `docs/submission/` | 보고서 절별 출처와 제출 점검, 발표자료 구성과 데모 시나리오 |
 | `docs/records/` | 성능 예측, AI 활용 기록, 작업 시간. 덧붙이기만 한다 |

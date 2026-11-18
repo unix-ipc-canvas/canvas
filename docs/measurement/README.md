@@ -30,11 +30,11 @@
 
 ## 측정 환경 기록
 
-측정용 컴퓨터에서 아래를 실행해 보고서 2.1절 표에 옮긴다. `scripts/bench.sh` 가 측정을 시작할 때 같은 내용과 IPC 한도를 `results/bench_env.txt` 에 남긴다.
+측정용 컴퓨터에서 아래를 실행해 보고서 2.1절 표에 옮긴다. `scripts/bench.sh` 가 측정을 시작할 때 같은 내용과 IPC 한도를 `results/bench_env.txt` 에 남기고, 측정 시작과 끝에 CPU를 쓰는 프로세스(`top`)도 함께 남긴다. 끌 수 없는 프로그램은 거기서 확인한다. 출력은 영어 기준이라 `LC_ALL=C`를 붙인다(한국어 설정에서는 `lscpu`의 항목 이름이 한국어로 나와 아래 `grep`이 빈 결과를 낸다).
 
 ```bash
-lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core'
-free -h | head -2
+LC_ALL=C lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core'
+LC_ALL=C free -h | head -2
 . /etc/os-release && echo "$PRETTY_NAME"; uname -r
 gcc --version | head -1
 systemd-detect-virt        # none 이면 네이티브
@@ -87,6 +87,7 @@ sequenceDiagram
 - 지연은 요청 하나를 표본 하나로 본다. 상위 99%가 의미를 가지려면 표본이 수천 개는 있어야 한다.
 - 보고하는 값은 평균, 중앙값, 상위 99%, 최대다. 백분위수는 nearest-rank 방식이다(작은 쪽부터 ceil(q × n)번째 값, `util.c`의 `lat_stats`).
 - 과제의 "30회 이상"은 표본 수로 보면 충분히 넘는다. 같은 조건을 5번 실행하고, 실행마다 낸 값(평균, 중앙값, 상위 99%, 최대, 처리량)의 중앙값을 그래프와 표에 쓴다. 실행 사이의 편차((최대 - 최소) / 중앙값)를 요약표에 함께 낸다.
+- IPC 사이의 순위는 실행별 값에서 가장 좋은 것과 가장 나쁜 것을 하나씩 뺀 범위(5번이면 가운데 3번)가 겹치지 않을 때만 매긴다. 겹치면 차이가 실행 사이의 흔들림보다 작은 것이므로 `≈`로 묶는다(`scripts/plot-bench.py`). 실행 하나가 튀어도 순위가 뒤집히지 않고, 흔들림보다 작은 차이로 순위를 매기지도 않게 하려는 것이다.
 
 ## 1단계 벤치마크
 
@@ -110,7 +111,7 @@ sequenceDiagram
 | 자원 사용량 | client 줄은 모든 클라이언트의 합(VmRSS·VmHWM은 가장 큰 값), server 줄은 서버 하나. 둘 다 측정 구간만 | |
 | clock_gettime 비용 | 100만 번 연달아 불러 한 번의 비용을 잰다 (`bench -K`, `results/bench_clock.csv`) | 작은 메시지의 지연에 섞이는 측정 비용을 보고서에 함께 쓴다 |
 
-`scripts/bench.sh` 가 위 조합을 모두 돌린다. 커밋하지 않은 코드 변경이 있으면 멈춘다. 그래프와 요약표는 `scripts/plot-bench.py` 가 `docs/assets/bench/` 에 만든다.
+`scripts/bench.sh` 가 위 조합을 모두 돌린다. 커밋하지 않은 코드 변경이 있으면 멈춘다. 그래프와 요약표는 `scripts/plot-bench.py` 가 `docs/assets/bench/` 에 만든다. 측정 기록과 해석은 [1단계 측정 결과](stage1.md)에 있다.
 
 ## 2단계 실험
 
