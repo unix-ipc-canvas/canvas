@@ -37,7 +37,8 @@ BENCH  := $(if $(wildcard src/bench/bench.c),$(HAVE_B:%=$(BIN)/bench_%))
 APP    := $(if $(wildcard src/common/server.c),$(HAVE:%=$(BIN)/server_%)) \
           $(if $(wildcard src/common/client.c),$(HAVE:%=$(BIN)/client_%))
 VERIFY := $(if $(wildcard src/common/verify.c),$(BIN)/verify)
-TPTEST := $(if $(wildcard src/test/tptest.c),$(HAVE:%=$(BIN)/tptest_%))
+TPTEST := $(if $(wildcard src/test/tptest.c),$(HAVE:%=$(BIN)/tptest_%)) \
+          $(if $(wildcard src/test/apptest.c),$(HAVE:%=$(BIN)/apptest_%))
 
 .PHONY: all bench app tptest check test clean ipcclean dist
 all: check bench app $(VERIFY) $(TPTEST)
@@ -59,6 +60,9 @@ $$(BIN)/client_$(1): $$(OBJ)/src/common/client.o $$(OBJ)/src/transport/transport
 	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
 
 $$(BIN)/tptest_$(1): $$(OBJ)/src/test/tptest.o $$(OBJ)/src/transport/transport_$(1).o $$(COMMON_OBJ) | $$(BIN)
+	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
+
+$$(BIN)/apptest_$(1): $$(OBJ)/src/test/apptest.o $$(OBJ)/src/transport/transport_$(1).o $$(COMMON_OBJ) | $$(BIN)
 	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
 endef
 $(foreach i,$(IPCS) $(BENCH_ONLY),$(eval $(call IPC_RULES,$(i))))
