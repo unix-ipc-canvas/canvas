@@ -118,6 +118,9 @@ make bench
 ```bash
 scripts/bench.sh                  # results/bench_*.csv, results/bench_env.txt
 python3 scripts/plot-bench.py     # docs/assets/bench/ 에 그래프와 요약표 (matplotlib 필요: sudo apt install python3-matplotlib)
+python3 scripts/plot-bench.py results/stage1-r20 docs/assets/bench/stage1-r20   # 다른 폴더의 원자료
+scripts/exp-stage1.sh             # CPU 배치를 바꾼 원인 확인 실험 → results/exp-*/
+python3 scripts/compare-bench.py docs/assets/bench/experiments.md results/stage1-r20:results/exp-pcore   # 기준:실험 비교 표
 ```
 
 `REPS`, `SIZES`, `CLIENTS`, `IPCS`, `INFLIGHT`, `OUT` 환경 변수로 일부만 돌릴 수 있다. 예: `REPS=1 SIZES="64 1048576" CLIENTS="1 8" OUT=/tmp/x scripts/bench.sh`
