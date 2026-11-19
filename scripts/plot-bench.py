@@ -238,7 +238,7 @@ save(fig, 'cost_size.png')
 out = []
 w = out.append
 w('# 1단계 측정 요약\n')
-w('`scripts/plot-bench.py` 가 `results/bench_*.csv` 에서 만든 파일이다. 손으로 고치지 않는다. '
+w(f'`scripts/plot-bench.py` 가 `{RES}/bench_*.csv` 에서 만든 파일이다. 손으로 고치지 않는다. '
   '같은 조건을 여러 번 잰 값은 실행마다의 값의 중앙값이다. 지연 단위는 µs, 처리량은 MB/s (1 MB = 10^6 B). '
   '순위는 pipe, mq, shm 사이에서만 매긴다. upipe(익명 pipe)는 FIFO 와 이름 유무만 다른 대조군이다. '
   '순위를 매길 때는 실행별 값에서 좋은 쪽과 나쁜 쪽을 4분의 1씩 뺀 범위(20번이면 가운데 10번)를 보고, '
@@ -248,7 +248,7 @@ env = os.path.join(RES, 'bench_env.txt')
 if os.path.exists(env):
     keep = ('date:', 'commit:', 'reps:', 'Model name', 'CPU(s):', 'Thread(s) per core', 'Core(s) per socket', 'Mem:')
     lines = [l.rstrip() for l in open(env, encoding='utf-8') if l.startswith(keep)]
-    w('측정 환경 (`results/bench_env.txt` 에서 일부)\n')
+    w(f'측정 환경 (`{RES}/bench_env.txt` 에서 일부)\n')
     w('```text\n' + '\n'.join(lines) + '\n```\n')
 
 if clock:
