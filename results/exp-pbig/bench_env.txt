@@ -1,0 +1,107 @@
+# scripts/bench.sh 가 측정을 시작할 때 기록한 환경
+date: 2026-11-19T23:10:31+09:00
+commit: cbebff6
+reps: 20, ipcs: pipe mq shm, sizes: 65536 1048576, clients: 1, inflight: 16
+
+## lscpu
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      47%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+
+## free -h
+               total        used        free      shared  buff/cache   available
+Mem:            14Gi       6.6Gi       2.6Gi       1.3Gi       7.5Gi       8.2Gi
+
+## os
+Ubuntu 26.04.1 LTS
+7.0.0-43-generic
+
+## gcc
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+
+## virtualization
+none
+
+## cpufreq governor
+     12 powersave
+
+## CPU 배치 (taskset 으로 묶었는지)
+pid 162568's current affinity list: 0-3
+
+## IPC 한도
+msgmax: 8192
+msgmnb: 16384
+PIPE_BUF: 4096
+pipe-max-size: 1048576
+sem (SEMMSL SEMMNS SEMOPM SEMMNI): 32000	1024000000	500	32000
+shmmax: 18446744073692774399
+
+## ipcs -l
+
+------ Messages Limits --------
+max queues system wide = 32000
+max size of message (bytes) = 8192
+default max size of queue (bytes) = 16384
+
+------ Shared Memory Limits --------
+max number of segments = 4096
+max seg size (kbytes) = 18014398509465599
+max total shared memory (kbytes) = 18446744073709551612
+min seg size (bytes) = 1
+
+------ Semaphore Limits --------
+max number of arrays = 32000
+max semaphores per array = 32000
+max semaphores system wide = 1024000000
+max ops per semop call = 500
+semaphore max value = 32767
+
+
+## 측정 시작 때 CPU 를 쓰는 프로세스 (끌 수 없는 프로그램 확인용)
+ 23:10:31 up  2:22,  1 user,  load average: 1.25, 1.58, 1.93
+top - 23:10:32 up  2:22,  1 user,  load average: 1.25, 1.58, 1.93
+Tasks: 413 total,   1 running, 412 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.7 us,  1.2 sy,  0.0 ni, 98.1 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15156.7 total,   2623.4 free,   6797.8 used,   7691.8 buff/cache     
+MiB Swap:   4096.0 total,   4095.4 free,      0.6 used.   8359.0 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  12764 movingg+  20   0 9035112 755544 722156 S  10.9   4.9   3:20.83 qemu-system-x86
+   5858 movingg+  20   0 1448.6g 460156 224028 S   3.0   3.0   4:07.26 claude-desktop
+   6403 movingg+  20   0 1454.0g 885836 167160 S   3.0   5.7  15:47.44 claude-desktop
+   4602 movingg+  20   0 7750572 331876 199296 S   2.0   2.1   9:37.91 gnome-shell
+ 162683 movingg+  20   0    7780   5752   3660 R   2.0   0.0   0:00.03 top
+    100 root      25   5       0      0      0 S   1.0   0.0   0:02.77 ksmd
+   6073 movingg+  20   0   53.0g 186316 160756 S   1.0   1.2   7:40.22 claude-desktop
+   6715 movingg+  20   0   12.2g 160300  57988 S   1.0   1.0   0:08.33 node
+ 154072 root       0 -20       0      0      0 I   1.0   0.0   0:01.51 kworker/u49:0-i915_flip
+      1 root      20   0   26168  16684  11152 S   0.0   0.1   0:02.64 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.01 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_workqueue_release
+
+## 측정 끝: 2026-11-19T23:11:51+09:00, 79초, 실행 240 번, 실패 0 번
+
+## 측정 끝 때 CPU 를 쓰는 프로세스
+ 23:11:51 up  2:24,  1 user,  load average: 1.78, 1.68, 1.93
+top - 23:11:52 up  2:24,  1 user,  load average: 1.78, 1.68, 1.93
+Tasks: 415 total,   1 running, 414 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.6 us,  0.9 sy,  0.0 ni, 98.5 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15156.7 total,   2523.1 free,   6897.7 used,   7641.9 buff/cache     
+MiB Swap:   4096.0 total,   4095.4 free,      0.6 used.   8259.0 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  12764 movingg+  20   0 9035112 755544 722156 S   9.9   4.9   3:23.48 qemu-system-x86
+   6073 movingg+  20   0   53.0g 181752 156488 S   2.0   1.2   7:40.97 claude-desktop
+   5858 movingg+  20   0 1448.6g 461100 223980 S   1.0   3.0   4:07.72 claude-desktop
+   6403 movingg+  20   0 1454.0g 882504 162292 S   1.0   5.7  15:50.44 claude-desktop
+   6715 movingg+  20   0   12.2g 160384  57988 S   1.0   1.0   0:08.55 node
+  15482 movingg+  20   0  239956   7788   7072 S   1.0   0.1   0:01.63 ptyxis-agent
+ 165585 movingg+  20   0    7780   5748   3660 R   1.0   0.0   0:00.03 top
+      1 root      20   0   26168  16684  11152 S   0.0   0.1   0:02.64 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.02 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_workqueue_release
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-rcu_gp
+      5 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-sync_wq
