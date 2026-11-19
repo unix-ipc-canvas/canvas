@@ -27,6 +27,14 @@
  *   요청을 다 보냈거나 신호를 받으면, 띄워 둔 요청의 응답을 모두 받은 뒤 STATS 를 보낸다. 수신 스레드는
  *   STATS 응답을 마지막 응답으로 알고 끝난다. 그 뒤 BYE 를 보내고, 모든 스레드를 거둔 다음 tp_client_close 를 부른다.
  *   서버가 끝나면 전송 계층이 EPIPE·ECONNRESET 을 돌려주므로 송수신 스레드가 빠져나온다.
+ *   두 번째 신호를 받으면 남은 응답을 기다리지 않고 신호 스레드가 tp_client_close 를 부른 뒤 바로 끝낸다(종료 코드 1).
+ *
+ * DECISION: 두 번째 신호로 끝낼 때는 막혀 있는 송수신 스레드를 거두지 않은 채 tp_client_close 를 부르고 _exit 한다.
+ *   서버가 멈춘 채 살아 있으면 tp_recv_resp 가 돌아오지 않는데, transport.h 에는 그것을 깨우는 함수가 없다.
+ *   "송수신 스레드가 빠져나온 뒤에 닫는다"는 약속을 어기지만 프로세스가 곧바로 끝나므로 닫은 자원을 다시 쓰지 않는다.
+ *   그래서 이 경로에서는 ThreadSanitizer 가 pipe·mq 버전의 닫기(fd 닫기, 버퍼 해제)와 막힌 송수신 사이의 경쟁을 보고한다.
+ *   tp_client_close 가 클라이언트 쪽 자원(pipe 버전의 응답 FIFO)을 지우므로 kill -9 와 달리 아무것도 남지 않는다.
+ *   main 의 정상 닫기와 겹치지 않게 close_mtx 로 한 번만 닫는다.
  *
  * DECISION: 워밍업 요청은 측정 요청열과 다른 시드(seed ^ WARM_SEED_MIX)의 같은 생성기로 만들고, DRAW 의 v 를 0 으로
  *   바꿔 보낸다. 0 을 더하는 DRAW 는 캔버스를 바꾸지 않으므로 검증기는 워밍업을 몰라도 같은 체크섬을 내고,
@@ -126,6 +134,8 @@ static struct {
     atomic_bool      stop;          /* 신호를 받았다. 새 요청을 보내지 않는다 */
     atomic_bool      failed;        /* 전송 계층이 실패했다 */
     atomic_bool      quit_sig;      /* 신호 스레드를 끝낸다 */
+    pthread_mutex_t  close_mtx;     /* tp_client_close 를 한 번만 부른다 (main 과 신호 스레드) */
+    bool             closed;
     const char      *fail_what;     /* 처음 실패. fail() 이 한 번만 적는다 */
     int              fail_errno;
     int              signo;
@@ -449,6 +459,26 @@ static void *stats_main(void *arg)
 
 /* ---- 신호 ---- */
 
+/* tp_client_close 를 한 번만 부른다. main 의 정상 경로와 신호 스레드의 강제 종료가 함께 쓴다 */
+static void client_close(void)
+{
+    pthread_mutex_lock(&C.close_mtx);
+    if (!C.closed) {
+        tp_client_close();
+        C.closed = true;
+    }
+    pthread_mutex_unlock(&C.close_mtx);
+}
+
+/* 두 번째 신호: 남은 응답을 기다리지 않고 끝낸다 (맨 위의 DECISION) */
+static void force_quit(int sig)
+{
+    fprintf(stderr, "client_%s %u: 두 번째 %s 를 받아 남은 응답을 기다리지 않고 끝낸다\n",
+            tp_name(), C.cfg.id, sig == SIGTERM ? "SIGTERM" : "SIGINT");
+    client_close();
+    _exit(1);
+}
+
 static void *signal_main(void *arg)
 {
     const sigset_t *set = arg;
@@ -459,8 +489,9 @@ static void *signal_main(void *arg)
             if (atomic_load(&C.quit_sig)) return NULL;
             continue;
         }
-        /* SIGINT, SIGTERM: 새 요청을 멈춘다. 빈 슬롯을 기다리는 송신 스레드를 깨운다 */
-        if (!atomic_exchange(&C.stop, true)) C.signo = sig;
+        /* SIGINT, SIGTERM: 새 요청을 멈춘다. 빈 슬롯을 기다리는 송신 스레드를 깨운다. 두 번째면 바로 끝낸다 */
+        if (atomic_exchange(&C.stop, true)) force_quit(sig);
+        C.signo = sig;
         sem_post(&C.free_slots);
     }
 }
@@ -596,6 +627,7 @@ int main(int argc, char **argv)
     pthread_cond_init(&C.cv, NULL);
     pthread_mutex_init(&C.rec_mtx, NULL);
     pthread_cond_init(&C.rec_cv, NULL);
+    pthread_mutex_init(&C.close_mtx, NULL);
     atomic_init(&C.stop, false);
     atomic_init(&C.failed, false);
     atomic_init(&C.quit_sig, false);
@@ -636,7 +668,7 @@ int main(int argc, char **argv)
     if (stats_ok) pthread_join(stats_th, NULL);
     else if (recv_ok) stats_main(NULL);
 
-    tp_client_close();
+    client_close();
 
     if (sig_ok) {
         atomic_store(&C.quit_sig, true);
