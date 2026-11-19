@@ -72,10 +72,12 @@ def spread(runs, col):
 
 
 def core(vals):
-    """실행별 값에서 가장 좋은 것과 가장 나쁜 것을 하나씩 뺀 범위 (4번 미만이면 전체 범위)"""
+    """실행별 값에서 좋은 쪽과 나쁜 쪽을 4분의 1씩 뺀 범위 (5번이면 가운데 3번, 20번이면 가운데 10번).
+    4번 미만이면 전체 범위"""
     v = sorted(vals)
-    if len(v) >= 4:
-        v = v[1:-1]
+    k = len(v) // 4
+    if k:
+        v = v[k:-k]
     return v[0], v[-1]
 
 
@@ -154,7 +156,7 @@ for ipc in IPCS:
 ax.set_yscale('log')
 ax.set_ylabel('Round-trip latency (µs, log)')
 ax.set_title('Round-trip latency vs message size (1 client, 1 in flight)')
-ax.text(0.99, 0.02, 'shaded: p50 range over runs, best and worst run dropped', transform=ax.transAxes,
+ax.text(0.99, 0.02, 'shaded: p50 range over runs, best and worst quarter dropped', transform=ax.transAxes,
         ha='right', va='bottom', fontsize=7, color='0.35')
 size_axis(ax)
 ax.legend(ncol=2, fontsize=8)
@@ -239,7 +241,7 @@ w('# 1단계 측정 요약\n')
 w('`scripts/plot-bench.py` 가 `results/bench_*.csv` 에서 만든 파일이다. 손으로 고치지 않는다. '
   '같은 조건을 여러 번 잰 값은 실행마다의 값의 중앙값이다. 지연 단위는 µs, 처리량은 MB/s (1 MB = 10^6 B). '
   '순위는 pipe, mq, shm 사이에서만 매긴다. upipe(익명 pipe)는 FIFO 와 이름 유무만 다른 대조군이다. '
-  '순위를 매길 때는 실행별 값에서 가장 좋은 것과 가장 나쁜 것을 하나씩 뺀 범위(5번이면 가운데 3번)를 보고, '
+  '순위를 매길 때는 실행별 값에서 좋은 쪽과 나쁜 쪽을 4분의 1씩 뺀 범위(20번이면 가운데 10번)를 보고, '
   '두 IPC 의 범위가 겹치면 차이가 실행 사이의 흔들림보다 작은 것이므로 ≈ 로 묶어 같은 순위로 둔다.\n')
 
 env = os.path.join(RES, 'bench_env.txt')

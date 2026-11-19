@@ -2,7 +2,7 @@
 # 1단계 측정. IPC(pipe, 익명 pipe upipe, mq, shm) × 메시지 크기 × 클라이언트 수를 지연과 처리량으로 재서 results/ 에 남긴다.
 # 측정 방법의 원본은 docs/measurement/README.md 다. 측정용 컴퓨터에서만 돌린다.
 #
-#   scripts/bench.sh                                       전체 (반복 5회)
+#   scripts/bench.sh                                       전체 (반복 20회)
 #   REPS=1 SIZES="64 1048576" CLIENTS="1 8" OUT=/tmp/x scripts/bench.sh   일부만, 다른 곳에
 #
 # 결과 (OUT, 기본 results/)
@@ -14,7 +14,7 @@
 set -u
 cd "$(dirname "$0")/.."
 
-REPS=${REPS:-5}
+REPS=${REPS:-20}
 IPCS=${IPCS:-"pipe upipe mq shm"}
 SIZES=${SIZES:-"64 1024 4096 16384 65536 262144 1048576"}
 CLIENTS=${CLIENTS:-"1 2 4 8"}
