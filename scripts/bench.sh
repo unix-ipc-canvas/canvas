@@ -64,6 +64,7 @@ cpu_snapshot() {
     echo; echo "## virtualization"
     if command -v systemd-detect-virt >/dev/null; then systemd-detect-virt || true; else echo "(systemd-detect-virt 없음)"; fi
     echo; echo "## cpufreq governor"; cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c || echo "(없음)"
+    echo; echo "## CPU 배치 (taskset 으로 묶었는지)"; taskset -cp $$ 2>/dev/null || echo "(taskset 없음)"
     echo; echo "## IPC 한도"
     echo "msgmax: $(cat /proc/sys/kernel/msgmax)"
     echo "msgmnb: $(cat /proc/sys/kernel/msgmnb)"
