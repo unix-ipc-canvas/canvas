@@ -8,13 +8,13 @@
 
 ## 검증 전략
 
-[verify.sh](../../scripts/verify.sh)가 항목마다 PASS, FAIL, SKIP을 출력한다. CI는 PR과 `main` 푸시마다 이 스크립트를 실행한다. 지금은 문서 검사(T-00), 빌드 검사(T-01~T-03), 전송 계층과 1단계 벤치마크 검사(T-04, T-05), 남은 자원 검사(T-20), 측정 원자료 검사(T-40, T-41)가 들어 있고, 서버·클라이언트를 실행하는 항목은 서버·클라이언트 구현(T4 단계)과 함께 서버 담당이 추가한다.
+[verify.sh](../../scripts/verify.sh)가 항목마다 PASS, FAIL, SKIP을 출력한다. CI는 PR과 `main` 푸시마다 이 스크립트를 실행한다. 지금은 문서 검사(T-00), 빌드 검사(T-01~T-03), 전송 계층과 1단계 벤치마크 검사(T-04, T-05), 남은 자원 검사(T-20), 측정 원자료 검사(T-40, T-41)가 들어 있고, 서버·클라이언트를 실행하는 항목은 서버·클라이언트 구현(T4 단계)과 함께 서버 담당이 추가한다. 스크립트는 빌드 검사를 위해 여러 번 `make clean`을 하지만, 끝나면 일반 빌드(`make`)의 실행 파일을 `bin/`에 남긴다.
 
 ### 빌드와 구조
 
 | 번호 | 요구사항 | 확인 내용 | 방법 |
 | --- | --- | --- | --- |
-| T-00 | 문서 관리 | 문서의 링크가 살아 있고, 모든 요구사항 번호가 이 명세에 대응되며, 이 명세와 `verify.sh`의 번호가 같고, 예측 전에 서버·클라이언트 구현이 없다 | [check-docs.py](../../scripts/check-docs.py) |
+| T-00 | 문서 관리 | 문서의 링크가 살아 있고, 모든 요구사항 번호가 이 명세에 대응되며, 이 명세와 `verify.sh`의 번호가 같고, 예측 전에 서버·클라이언트 구현이 없다 | [check-docs.py](../../scripts/check-docs.py). `docs/`가 없는 곳(`make dist`로 만든 제출용 tar)에서는 SKIP |
 | T-01 | C-1, C-7 | `make` 전체 빌드가 경고 없이 통과한다 | `make EXTRA_CFLAGS=-Werror` |
 | T-02 | C-7 | `make pipe`, `make mq`, `make shm`, `make upipe`(벤치마크만)가 각각 그 버전만 빌드한다 | 버전마다 빈 상태에서 빌드 |
 | T-03 | C-6 | `src/common/`, `src/bench/`, `src/test/`에 IPC 고유 호출이 없다 | `msgsnd`, `shmat`, `mkfifo` 등을 검색 |
@@ -64,7 +64,7 @@
 | 번호 | 요구사항 | 확인 내용 | 방법 |
 | --- | --- | --- | --- |
 | T-40 | F-12 | 1단계 원자료에 메시지 크기 5단계 이상 × 클라이언트 1·2·4·8 × IPC 3종의 모든 조합이 있다. 지연·처리량 파일 모두, 조합마다 client·server 줄이 있다 | [check-results.py](../../scripts/check-results.py)가 `results/bench_latency.csv`, `results/bench_throughput.csv`의 조합을 센다. 원자료가 없으면 SKIP |
-| T-41 | N-4 | CSV에 [원자료 형식](../measurement/README.md#원자료-형식)의 열이 모두 있다 | 같은 스크립트가 `results/`의 모든 CSV 머리글을 `util.h`의 `CSV_HEADER`와 열 순서까지 비교하고, 줄마다 칸 수를 센다. 측정 방법 문서의 열 목록이 `CSV_HEADER`와 다르면 FAIL |
+| T-41 | N-4 | CSV에 [원자료 형식](../measurement/README.md#원자료-형식)의 열이 모두 있다 | 같은 스크립트가 `results/`의 모든 CSV 머리글을 `util.h`의 `CSV_HEADER`와 열 순서까지 비교하고, 줄마다 칸 수를 센다. 측정 방법 문서의 열 목록이 `CSV_HEADER`와 다르면 FAIL. 측정 방법 문서가 없는 곳(제출용 tar)에서는 문서와의 비교만 건너뛴다 |
 
 ### 자동 검사 밖의 요구사항
 
@@ -86,7 +86,7 @@
 
 자동화하지 않고 제출 전에 사람이 한 번 확인한다.
 
-- Ubuntu + gcc 환경의 깨끗한 폴더에서 `make dist`로 만든 tar를 풀어 `make`가 통과하는지
+- Ubuntu + gcc 환경의 깨끗한 폴더에서 `make dist`로 만든 tar를 풀어 `make`가 통과하고 `make test`가 FAIL 0인지(tar에는 `docs/`가 없어 T-00은 SKIP)
 - `readme.txt`의 순서대로 따라 했을 때 실행과 측정 재현이 되는지
 - `ipcs` 결과 화면을 캡처했는지
 - 보고서의 모든 수치가 `results/`의 원자료에서 나온 값인지
