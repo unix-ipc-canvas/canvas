@@ -5,6 +5,8 @@
 2. 요구사항 번호(F-, C-, N-)가 모두 테스트 명세에 대응되는가
 3. 테스트 명세의 번호(T-)와 scripts/verify.sh 의 번호가 서로 같은가
 4. 성능 예측을 쓰기 전에 서버·클라이언트 구현이 들어오지 않았는가
+
+종료 코드: 0 = 통과, 1 = 실패, 2 = 검사할 문서가 없다(SKIP. make dist 로 만든 제출용 tar 에는 docs/ 가 없다).
 """
 import glob
 import os
@@ -14,6 +16,10 @@ import urllib.parse
 
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 errors = []
+
+if not os.path.isdir('docs'):
+    print('문서 없음 (docs/ 가 없다. make dist 로 만든 제출용 tar 등)')
+    sys.exit(2)
 
 
 def read(path):

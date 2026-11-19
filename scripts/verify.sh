@@ -13,12 +13,13 @@ sk() { echo "SKIP  $1  $2"; skip=$((skip + 1)); }
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
-# T-00 문서 검사: 링크, 요구사항과 테스트의 대응, 예측 선행
-if python3 scripts/check-docs.py >"$log" 2>&1; then
-    ok T-00 "문서 검사"
-else
-    ng T-00 "문서 검사"; cat "$log"
-fi
+# T-00 문서 검사: 링크, 요구사항과 테스트의 대응, 예측 선행. docs/ 가 없으면(제출용 tar) SKIP
+python3 scripts/check-docs.py >"$log" 2>&1
+case $? in
+    0) ok T-00 "문서 검사" ;;
+    2) sk T-00 "$(head -1 "$log")" ;;
+    *) ng T-00 "문서 검사"; cat "$log" ;;
+esac
 
 # T-01 경고 없는 전체 빌드
 if make -s clean >/dev/null 2>&1 && make -s EXTRA_CFLAGS=-Werror >"$log" 2>&1; then
@@ -120,7 +121,7 @@ else
     ng T-20 "남은 자원:$left $fifos"
 fi
 
-make -s clean >/dev/null 2>&1
+# 끝난 뒤에는 T-04·T-05 앞에서 만든 일반 빌드(make)를 bin/ 에 남긴다. readme.txt 의 순서(make → make test → 실행)를 따라도 실행 파일이 있다
 echo "----"
 echo "PASS $pass / FAIL $fail / SKIP $skip"
 [ "$fail" -eq 0 ]
