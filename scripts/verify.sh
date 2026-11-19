@@ -13,12 +13,13 @@ sk() { echo "SKIP  $1  $2"; skip=$((skip + 1)); }
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
-# T-00 문서 검사: 링크, 요구사항과 테스트의 대응, 예측 선행
-if python3 scripts/check-docs.py >"$log" 2>&1; then
-    ok T-00 "문서 검사"
-else
-    ng T-00 "문서 검사"; cat "$log"
-fi
+# T-00 문서 검사: 링크, 요구사항과 테스트의 대응, 예측 선행. docs/ 가 없으면(제출용 tar) SKIP
+python3 scripts/check-docs.py >"$log" 2>&1
+case $? in
+    0) ok T-00 "문서 검사" ;;
+    2) sk T-00 "$(head -1 "$log")" ;;
+    *) ng T-00 "문서 검사"; cat "$log" ;;
+esac
 
 # T-01 경고 없는 전체 빌드
 if make -s clean >/dev/null 2>&1 && make -s EXTRA_CFLAGS=-Werror >"$log" 2>&1; then
