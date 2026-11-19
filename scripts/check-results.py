@@ -2,7 +2,7 @@
 """측정 원자료 검사. make test 의 T-40, T-41 이 실행한다.
 
   check-results.py T-40   1단계 원자료에 메시지 크기 5단계 이상 × 클라이언트 1·2·4·8 × IPC 3종의 모든 조합이 있는가
-  check-results.py T-41   results/ 의 모든 CSV 머리글이 원자료 형식의 열과 같은가
+  check-results.py T-41   results/ 아래 모든 CSV 머리글이 원자료 형식의 열과 같은가
 
 첫 줄에 한 줄 요약을 쓰고, 그다음 줄부터 문제를 쓴다.
 종료 코드: 0 = 통과, 1 = 실패, 2 = 검사할 원자료가 없다(SKIP).
@@ -15,7 +15,9 @@ import sys
 
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-STAGE1_FILES = ('results/bench_latency.csv', 'results/bench_throughput.csv')
+# 1단계 원자료: results/ 바로 아래(처음 측정)와 results/stage1-*/ (다시 잰 것). 실험(results/exp-*/)은 조합 일부만 잰다
+STAGE1_DIRS = ['results'] + sorted(d for d in glob.glob('results/stage1-*') if os.path.isdir(d))
+STAGE1_FILES = tuple(os.path.join(d, n) for d in STAGE1_DIRS for n in ('bench_latency.csv', 'bench_throughput.csv'))
 IPCS = ('pipe', 'mq', 'shm')
 CLIENTS = (1, 2, 4, 8)
 ROLES = ('client', 'server')   # 1단계는 실행 하나가 client, server 두 줄이다
@@ -64,7 +66,7 @@ def t40():
             problems.append(f'{f}: 그 밖에 {len(missing) - 10}개 조합이 더 없다')
         reps = sorted({n for k, n in count.items() if k[0] in IPCS})
         rep = f'{reps[0]}번' if len(reps) == 1 else f'{reps[0]}~{reps[-1]}번' if reps else '0번'
-        notes.append(f'{os.path.basename(f)} 크기 {len(sizes)}단계 × 클라이언트 {len(CLIENTS)} × IPC {len(IPCS)}, 조합마다 {rep}')
+        notes.append(f'{os.path.relpath(f, "results")} 크기 {len(sizes)}단계 × 클라이언트 {len(CLIENTS)} × IPC {len(IPCS)}, 조합마다 {rep}')
     if problems:
         finish(1, '1단계 원자료에 빠진 조합이 있다', problems)
     finish(0, ', '.join(notes))
@@ -98,7 +100,7 @@ def t41():
     if have_doc and code != doc:
         finish(1, '측정 방법 문서의 원자료 형식과 util.h 의 CSV_HEADER 가 다르다', [f'문서: {doc}', f'코드: {code}'])
     want = code.split(',')
-    files = sorted(glob.glob('results/*.csv'))
+    files = sorted(glob.glob('results/**/*.csv', recursive=True))
     if not files:
         finish(2, 'results/ 에 CSV 없음 (측정 전)')
     problems, n_rows = [], 0

@@ -26,7 +26,7 @@
 | 1.2 | 기능·비기능 요구사항, 제약 조건 충족 방법 | [요구사항](../requirements/README.md) | |
 | 2.1 | 측정 환경 | [측정 환경 기록](../measurement/README.md#측정-환경-기록)의 명령 출력, `results/bench_env.txt`, [1단계 측정 기록](../measurement/stage1.md#측정-기록) | |
 | 2.2 | 벤치마크 설계 | [측정 방법](../measurement/README.md) | |
-| 2.3, 2.4 | 1단계 결과와 해석 | [1단계 측정 결과](../measurement/stage1.md), [1단계 측정 요약](../assets/bench/summary.md)과 그래프(`results/bench_*.csv`에서 `scripts/plot-bench.py`가 만든다) | |
+| 2.3, 2.4 | 1단계 결과와 해석 | [1단계 측정 결과](../measurement/stage1.md), [1단계 측정 요약(반복 20번)](../assets/bench/stage1-r20/summary.md)과 그래프(`results/stage1-r20/`에서 `scripts/plot-bench.py`가 만든다), [1단계 실험 비교](../assets/bench/experiments.md) | |
 | 3 | 워크로드 명세와 예측 | [성능 예측](../records/prediction.md). 작성 당시 내용 그대로, 수정 기록은 구분해서 | |
 | 4 | 설계도, 스레드, 공유 자원과 동기화 | [설계 명세](../design/README.md) | |
 | 5.1 | 소스 주요 부분 | `src/transport/`의 생성·송수신·해제 코드, 락 코드 | |
@@ -46,7 +46,7 @@
 제출 직전에 한꺼번에 찍으면 빠뜨린다. 해당 단계에서 바로 찍는다. 캡처는 `docs/assets/captures/`에 둔다.
 
 - [x] 측정 환경 명령 출력: [측정 환경](../assets/captures/stage1-env.png), [IPC 한도](../assets/captures/stage1-ipc-limits.png)
-- [x] 1단계 측정 실행 결과: [`scripts/bench.sh` 출력의 처음과 끝](../assets/captures/stage1-bench-run.png)
+- [x] 1단계 측정 실행 결과: 처음 측정의 [`scripts/bench.sh` 출력 처음과 끝](../assets/captures/stage1-bench-run.png), 반복 20번 재측정과 실험의 [기록](../assets/captures/stage1-r20-run.png)
 - [ ] 세 버전 각각의 서버·클라이언트 실행 화면
 - [ ] 실행 중과 종료 뒤의 `ipcs`: 1단계 벤치마크로 찍은 [실행 중](../assets/captures/stage1-ipcs-running.png), [측정 뒤](../assets/captures/stage1-ipcs-after.png)가 있다. 응용 데모로 다시 찍는다
 - [ ] `make`와 `make test` 출력: 응용 전(1단계 시점, SKIP 15)의 [make](../assets/captures/stage1-make.png), [make test](../assets/captures/stage1-make-test.png)가 있다. 응용을 넣은 뒤 다시 찍는다
