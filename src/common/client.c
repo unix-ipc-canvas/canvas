@@ -10,7 +10,7 @@
  *   send    요청을 만들어 요청 시각 표에 적고 보낸다. 워밍업 → 측정 → STATS → BYE 순서
  *   recv    응답을 받아 요청 시각 표에서 찾고, 검사하고, 구간별 시간을 기록한다
  *   stats   수신이 끝나면 기록을 모아 통계를 내고 출력하고 CSV 에 쓴다
- *   signal  SIGINT·SIGTERM 을 sigwait 로 받아 새 요청을 멈추게 한다
+ *   signal  SIGINT·SIGTERM 을 sigwait 로 받아 새 요청을 멈추게 한다. -G 의 시작 신호 SIGUSR2 도 받는다
  *
  * 요청 시각 표 (설계 명세의 공유 자원 표)
  *   동시 요청 수(-f)만큼의 슬롯 + 세마포어(빈 슬롯 수) + mutex. 송신 스레드는 빈 슬롯을 세마포어로 얻은 뒤
@@ -43,6 +43,9 @@
  *   다 재지 못한 실행이 원자료에 섞이지 않게 하려는 것이다.
  * DECISION: CSV 의 workers 칸은 끝날 때 보내는 STATS 응답의 n_workers 로 채운다. 서버의 락 방식과 타일 크기는
  *   프로토콜로 알 수 없어서, clients·lock·tile 칸은 -c, -L, -T 로 받은 값을 그대로 적는다(동작은 바꾸지 않는다).
+ * DECISION: -G 를 주면 워밍업 응답을 모두 받은 뒤 stderr 에 '준비' 를 쓰고 SIGUSR2 를 기다린다. 측정 스크립트가 모든
+ *   클라이언트의 준비를 확인한 뒤 한꺼번에 보내, 1단계처럼 측정 구간이 같은 시각에 시작한다. 그래서 전체 처리량을
+ *   (모든 클라이언트의 요청 수) / (가장 긴 elapsed_s) 로 낼 수 있다. 기다리는 동안 SIGINT 를 받으면 재지 않고 끝낸다.
  * DECISION: BYE 는 응답을 기다리지 않는다. 서버가 응답하더라도 받는 쪽이 없으면 전송 계층이 버린다.
  */
 #include <errno.h>
@@ -70,6 +73,7 @@
 typedef struct {
     uint32_t    id;
     uint64_t    seed, n, warm;
+    bool        gate;       /* -G: 워밍업 뒤 SIGUSR2 를 받아야 측정을 시작한다 */
     uint32_t    draw_pct, rect, snap, inflight;
     const char *out, *exp, *commit, *lock;
     long        run, clients, tile;
@@ -132,6 +136,9 @@ static struct {
     long             rss_kb, hwm_kb;
 
     atomic_bool      stop;          /* 신호를 받았다. 새 요청을 보내지 않는다 */
+    pthread_mutex_t  gate_mtx;      /* -G: 측정 시작 신호 (SIGUSR2) 를 기다린다 */
+    pthread_cond_t   gate_cv;
+    bool             go;
     atomic_bool      failed;        /* 전송 계층이 실패했다 */
     atomic_bool      quit_sig;      /* 신호 스레드를 끝낸다 */
     pthread_mutex_t  close_mtx;     /* tp_client_close 를 한 번만 부른다 (main 과 신호 스레드) */
@@ -249,8 +256,15 @@ static void *send_main(void *arg)
         if (send_one(r.type, &r.p, r.len, workload_resp_len(&r), false, true) < 0) break;
     }
 
-    /* 측정 구간: 워밍업 응답을 모두 받은 뒤 시작한다 */
-    if (wait_idle() && !atomic_load(&C.stop)) {
+    /* 측정 구간: 워밍업 응답을 모두 받은 뒤 시작한다. -G 이면 준비를 알리고 시작 신호(SIGUSR2)를 기다린다 (맨 위의 DECISION) */
+    bool idle0 = wait_idle();
+    if (idle0 && cfg->gate && !atomic_load(&C.stop)) {
+        fprintf(stderr, "client_%s %u: 준비 (시작 신호 SIGUSR2 를 기다린다)\n", tp_name(), cfg->id);
+        pthread_mutex_lock(&C.gate_mtx);
+        while (!C.go && !atomic_load(&C.stop)) pthread_cond_wait(&C.gate_cv, &C.gate_mtx);
+        pthread_mutex_unlock(&C.gate_mtx);
+    }
+    if (idle0 && !atomic_load(&C.stop)) {
         usage_now(&C.u_start);
         C.t_start = now_ns();
         uint64_t sent = 0;
@@ -489,10 +503,20 @@ static void *signal_main(void *arg)
             if (atomic_load(&C.quit_sig)) return NULL;
             continue;
         }
+        if (sig == SIGUSR2) {           /* -G 의 측정 시작 신호. -G 가 없으면 무시한다 */
+            pthread_mutex_lock(&C.gate_mtx);
+            C.go = true;
+            pthread_cond_broadcast(&C.gate_cv);
+            pthread_mutex_unlock(&C.gate_mtx);
+            continue;
+        }
         /* SIGINT, SIGTERM: 새 요청을 멈춘다. 빈 슬롯을 기다리는 송신 스레드를 깨운다. 두 번째면 바로 끝낸다 */
         if (atomic_exchange(&C.stop, true)) force_quit(sig);
         C.signo = sig;
         sem_post(&C.free_slots);
+        pthread_mutex_lock(&C.gate_mtx);   /* 시작 신호를 기다리던 송신 스레드도 깨운다 */
+        pthread_cond_broadcast(&C.gate_cv);
+        pthread_mutex_unlock(&C.gate_mtx);
     }
 }
 
@@ -502,7 +526,7 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
             "사용법: %s [-i 번호] [-s 시드] [-n 요청수] [-w 워밍업] [-m DRAW%%] [-r 변] [-S 변] [-f 동시요청]\n"
-            "          [-o 결과.csv] [-e 실험] [-R 반복] [-C 커밋] [-c 클라이언트수] [-L 락] [-T 타일]\n"
+            "          [-o 결과.csv] [-e 실험] [-R 반복] [-C 커밋] [-c 클라이언트수] [-L 락] [-T 타일] [-G]\n"
             "  -i N   클라이언트 번호 0~%u (기본 0)\n"
             "  -s N   시드 (기본 번호 + 1)\n"
             "  -n N   잴 요청 수 (기본 20000)\n"
@@ -515,7 +539,9 @@ static void usage(const char *prog)
             "  -e S   CSV 의 실험 이름 (기본 latency 또는 throughput)\n"
             "  -R N   CSV 의 반복 번호 (기본 1)\n"
             "  -C S   CSV 의 커밋 (기본: 환경 변수 BENCH_COMMIT)\n"
-            "  -c N, -L S, -T N   CSV 의 clients, lock, tile 칸. 서버 설정을 적는다 (동작은 바꾸지 않는다)\n",
+            "  -c N, -L S, -T N   CSV 의 clients, lock, tile 칸. 서버 설정을 적는다 (동작은 바꾸지 않는다)\n"
+            "  -G     워밍업이 끝나면 stderr 에 '준비' 를 쓰고 SIGUSR2 를 받을 때까지 측정을 미룬다.\n"
+            "         여러 클라이언트의 측정 시작을 맞출 때 쓴다 (scripts/app-bench.sh)\n",
             prog, MAX_CLIENTS - 1, WL_DRAW_PCT_DEFAULT, CANVAS_W, WL_RECT_DEFAULT, CANVAS_W, WL_SNAP_DEFAULT,
             MAX_INFLIGHT);
 }
@@ -572,6 +598,7 @@ int main(int argc, char **argv)
     sigaddset(&set, SIGINT);
     sigaddset(&set, SIGTERM);
     sigaddset(&set, SIGUSR1);
+    sigaddset(&set, SIGUSR2);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
 
     cfg_t *cfg = &C.cfg;
@@ -584,7 +611,7 @@ int main(int argc, char **argv)
     bool have_seed = false;
     uint64_t v;
     int opt;
-    while ((opt = getopt(argc, argv, "i:s:n:w:m:r:S:f:o:e:R:C:c:L:T:h")) != -1) {
+    while ((opt = getopt(argc, argv, "i:s:n:w:m:r:S:f:o:e:R:C:c:L:T:Gh")) != -1) {
         switch (opt) {
         case 'i': if (parse_u64(optarg, &v) < 0 || v >= MAX_CLIENTS) goto bad; cfg->id = (uint32_t)v; break;
         case 's': if (parse_u64(optarg, &v) < 0) goto bad; cfg->seed = v; have_seed = true; break;
@@ -601,6 +628,7 @@ int main(int argc, char **argv)
         case 'c': if (parse_u64(optarg, &v) < 0 || v < 1 || v > MAX_CLIENTS) goto bad; cfg->clients = (long)v; break;
         case 'L': cfg->lock = optarg; break;
         case 'T': if (parse_u64(optarg, &v) < 0 || v < 1 || v > CANVAS_W) goto bad; cfg->tile = (long)v; break;
+        case 'G': cfg->gate = true; break;
         case 'h': usage(argv[0]); return 0;
         default: goto bad;
         }
@@ -628,6 +656,8 @@ int main(int argc, char **argv)
     pthread_mutex_init(&C.rec_mtx, NULL);
     pthread_cond_init(&C.rec_cv, NULL);
     pthread_mutex_init(&C.close_mtx, NULL);
+    pthread_mutex_init(&C.gate_mtx, NULL);
+    pthread_cond_init(&C.gate_cv, NULL);
     atomic_init(&C.stop, false);
     atomic_init(&C.failed, false);
     atomic_init(&C.quit_sig, false);
