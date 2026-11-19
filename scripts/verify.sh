@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 검증 스크립트. 항목과 판정 기준의 원본은 docs/verification/README.md 다.
-# 실행 파일이 필요한 항목은 구현 전까지 SKIP 으로 남는다. SKIP 은 검증 완료가 아니다.
+# 실행 파일이 없는 항목은 SKIP 으로 남는다. SKIP 은 검증 완료가 아니다.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -97,15 +97,35 @@ for t in T-40 T-41; do
     esac
 done
 
-# T-10 ~ T-31 실행 검사: 서버·클라이언트 구현 뒤 이 자리에 추가한다
-if ! ls bin/server_* >/dev/null 2>&1; then
+# T-10 ~ T-31 2단계 실행 검사: IPC 버전마다 scripts/test-app.sh 를 돌리고, T-12 는 버전 사이의 체크섬을 비교한다
+app_have=""
+for i in pipe mq shm; do [ -x "bin/server_$i" ] && [ -x "bin/apptest_$i" ] && app_have="$app_have $i"; done
+if [ -z "$app_have" ]; then
     for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-21 T-22 T-30 T-31; do
-        sk "$t" "실행 파일 없음 (구현 전)"
+        sk "$t" "실행 파일 없음"
     done
 else
-    for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-21 T-22 T-30 T-31; do
-        sk "$t" "검사 코드 미작성"
+    sums=""
+    for i in $app_have; do
+        timeout 900 scripts/test-app.sh "$i" >"$log" 2>&1
+        while read -r st t rest; do
+            case $st in
+                PASS) ok "$t" "$rest" ;;
+                FAIL) ng "$t" "$rest" ;;
+                SUM)  sums="$sums $i=$t" ;;
+            esac
+        done < "$log"
+        grep -q '^SUM' "$log" || ng T-10 "$i: test-app.sh 가 끝까지 돌지 않았다 ($(tail -1 "$log"))"
     done
+    # T-12 같은 입력이면 IPC 버전과 상관없이 최종 캔버스가 같다
+    distinct=$(echo "$sums" | tr ' ' '\n' | sed -n 's/^[a-z]*=//p' | sort -u)
+    if [ "$(echo "$app_have" | wc -w)" -lt 2 ]; then
+        sk T-12 "IPC 버전이 하나뿐이라 비교할 수 없다"
+    elif [ "$(echo "$distinct" | wc -l)" = 1 ] && [ "$distinct" != none ]; then
+        ok T-12 "같은 입력의 체크섬이 모든 버전에서 같다:$sums"
+    else
+        ng T-12 "버전마다 체크섬이 다르다:$sums"
+    fi
 fi
 
 # T-20 남은 IPC 자원 없음 (우리 서버가 떠 있지 않을 때 실행한다)
