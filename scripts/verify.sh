@@ -121,7 +121,7 @@ else
     ng T-20 "남은 자원:$left $fifos"
 fi
 
-make -s clean >/dev/null 2>&1
+# 끝난 뒤에는 T-04·T-05 앞에서 만든 일반 빌드(make)를 bin/ 에 남긴다. readme.txt 의 순서(make → make test → 실행)를 따라도 실행 파일이 있다
 echo "----"
 echo "PASS $pass / FAIL $fail / SKIP $skip"
 [ "$fail" -eq 0 ]
