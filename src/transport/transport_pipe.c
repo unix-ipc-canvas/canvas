@@ -15,6 +15,7 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -439,6 +440,8 @@ static int cli_opened;
  *   3. 읽기 끝을 막힘 모드로 되돌린다.
  *   4. 첫 응답을 받으면 keeper 를 닫는다. 그 뒤 서버가 죽으면 쓰는 쪽이 모두 사라져
  *      tp_recv_resp 가 EOF 로 끝난다 (ECONNRESET). 서버가 죽었는데 클라이언트가 영원히 기다리지 않는다.
+ *   5. 첫 응답 전에는 keeper 가 쓰는 쪽으로 남아 있어 서버가 죽어도 EOF 가 오지 않는다. 그동안은 poll 로
+ *      요청 FIFO 의 쓰기 끝도 함께 본다. 읽는 쪽(서버)이 모두 사라지면 커널이 쓰기 끝에 POLLERR 을 올린다.
  */
 int tp_client_open(uint32_t client_id)
 {
@@ -500,9 +503,40 @@ int tp_send_req(const msg_hdr_t *hdr, const void *payload)
     return send_on_req(cli_req_fd, cli_lock_fd, hdr, payload);
 }
 
+/*
+ * 첫 응답이 올 때까지 기다린다 (위 tp_client_open 의 5). 응답이 읽을 수 있게 되면 keeper 를 닫고 0.
+ * 그 전에 서버가 죽으면 -1, errno = ECONNRESET.
+ * 응답이 와 있다는 것은 서버가 쓰기 끝을 열었다는 뜻이라, 이때 keeper 를 닫아도 EOF 가 먼저 오지 않는다.
+ * 서버가 쓰고 곧바로 닫았더라도 쓴 데이터는 남아 있어 먼저 읽힌다.
+ * DECISION: poll 은 WAIT_MS 마다 다시 부른다. 커널이 읽는 쪽이 닫힐 때 쓰기 쪽을 깨우지만 그것에 기대지 않는다.
+ *   첫 응답 전에만 쓰므로 측정 구간의 수신에는 poll 이 끼지 않는다.
+ */
+#define WAIT_MS 200
+
+static int wait_first_resp(void)
+{
+    struct pollfd p[2] = {
+        { .fd = cli_resp_fd, .events = POLLIN },
+        { .fd = cli_req_fd,  .events = 0 },     /* POLLERR 은 요청하지 않아도 돌아온다 */
+    };
+    for (;;) {
+        int r = poll(p, 2, WAIT_MS);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (p[0].revents) break;                /* 응답이 왔다 (닫힌 fd 이면 POLLNVAL, 아래 read 가 실패한다) */
+        if (p[1].revents & (POLLERR | POLLHUP | POLLNVAL)) { errno = ECONNRESET; return -1; }
+    }
+    int k = atomic_exchange(&cli_keeper_fd, -1);
+    if (k >= 0) close(k);
+    return 0;
+}
+
 /* 응답 1개 받기. 수신 스레드 하나만 부른다. 서버가 끝나면 -1, errno = ECONNRESET */
 ssize_t tp_recv_resp(msg_hdr_t *hdr, void *payload, size_t cap)
 {
+    if (atomic_load(&cli_keeper_fd) >= 0 && wait_first_resp() < 0) return -1;
     ssize_t n = recv_msg(cli_resp_fd, hdr, payload, cap);
     if (n >= 0 || errno == EMSGSIZE) {
         int k = atomic_exchange(&cli_keeper_fd, -1);
