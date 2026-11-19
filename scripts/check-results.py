@@ -77,20 +77,27 @@ def header_from_util():
     return ''.join(re.findall(r'"([^"]*)"', m.group(1))) if m else None
 
 
+MEASURE_DOC = 'docs/measurement/README.md'   # 제출용 tar(make dist)에는 없다
+
+
 def header_from_doc():
-    doc = read('docs/measurement/README.md')
+    doc = read(MEASURE_DOC)
     sec = re.search(r'^## 원자료 형식\s*$(.*?)^## ', doc, flags=re.S | re.M)
     block = re.search(r'```text\n(.*?)```', sec.group(1), flags=re.S) if sec else None
     return ''.join(block.group(1).split()) if block else None
 
 
 def t41():
-    code, doc = header_from_util(), header_from_doc()
-    if code is None or doc is None:
+    # 측정 방법 문서가 없으면(제출용 tar) 문서와의 비교만 건너뛰고 CSV 는 CSV_HEADER 로 검사한다
+    have_doc = os.path.exists(MEASURE_DOC)
+    code = header_from_util()
+    doc = header_from_doc() if have_doc else None
+    if code is None or (have_doc and doc is None):
         finish(1, '원자료 형식을 읽지 못했다',
-               [f'{name}에서 머리글을 찾지 못했다' for name, h in
-                (('include/util.h 의 CSV_HEADER', code), ('측정 방법의 원자료 형식', doc)) if h is None])
-    if code != doc:
+               [f'{name}에서 머리글을 찾지 못했다' for name, h, want in
+                (('include/util.h 의 CSV_HEADER', code, True), ('측정 방법의 원자료 형식', doc, have_doc))
+                if want and h is None])
+    if have_doc and code != doc:
         finish(1, '측정 방법 문서의 원자료 형식과 util.h 의 CSV_HEADER 가 다르다', [f'문서: {doc}', f'코드: {code}'])
     want = code.split(',')
     files = sorted(glob.glob('results/**/*.csv', recursive=True))
@@ -113,7 +120,8 @@ def t41():
         n_rows += len(rows) - 1
     if problems:
         finish(1, 'CSV 열이 원자료 형식과 다르다', problems[:20])
-    finish(0, f'CSV {len(files)}개, {n_rows}줄이 원자료 형식의 {len(want)}열과 같다')
+    note = '' if have_doc else ' (측정 방법 문서가 없어 CSV_HEADER 와만 비교)'
+    finish(0, f'CSV {len(files)}개, {n_rows}줄이 원자료 형식의 {len(want)}열과 같다{note}')
 
 
 if __name__ == '__main__':
