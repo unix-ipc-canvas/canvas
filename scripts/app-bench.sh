@@ -5,7 +5,7 @@
 #   scripts/app-bench.sh                                    전체 (반복 REPS 번, 기본 10)
 #   REPS=1 EXPS="base clients" OUT=/tmp/x scripts/app-bench.sh   일부만, 다른 곳에
 #
-# 결과 (OUT, 기본 results/stage2/)
+# 결과 (OUT, 기본 results/)
 #   app_env.txt      측정 환경
 #   app_<실험>.csv   실행마다 클라이언트 줄(role=client) 여러 개와 서버 줄(role=server) 하나. 반복 번호는 run 칸
 # 기준 조건: DRAW 90%, -r 16, -S 256, 클라이언트 4, 워커 4, -l global, -t 64, 클라이언트마다 20,000개.
@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 REPS=${REPS:-10}
 IPCS=${IPCS:-"pipe mq shm"}
 EXPS=${EXPS:-"base type draw clients workers lock tile"}
-OUT=${OUT:-results/stage2}
+OUT=${OUT:-results}
 
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 if ! git diff --quiet HEAD -- src include Makefile scripts 2>/dev/null; then

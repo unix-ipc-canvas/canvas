@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""2단계 결과 그래프와 요약표. results/stage2/app_*.csv 에서만 만든다.
+"""2단계 결과 그래프와 요약표. results/app_*.csv 에서만 만든다.
 
     python3 scripts/plot-app.py [결과폴더] [그림폴더]
-    기본: results/stage2/  docs/assets/app/
+    기본: results/  docs/assets/app/
 
 한 실행(같은 실험, 같은 반복 번호, 같은 조건)의 클라이언트 줄을 먼저 하나로 모은다.
   처리량      모든 클라이언트의 요청 수 합 / 가장 긴 elapsed_s. 클라이언트는 -G 로 측정을 함께 시작한다
@@ -22,7 +22,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-RES = sys.argv[1] if len(sys.argv) > 1 else 'results/stage2'
+RES = sys.argv[1] if len(sys.argv) > 1 else 'results'
 FIG = sys.argv[2] if len(sys.argv) > 2 else 'docs/assets/app'
 IPCS = ['pipe', 'mq', 'shm']
 COLOR = {'pipe': '#2563eb', 'mq': '#d97706', 'shm': '#059669'}
@@ -143,7 +143,7 @@ TITLE = {'base': '기준 조건 (클라이언트 4, DRAW 90%, -S 256)', 'type': 
 def table(lines, exp, data):
     vary = VARY.get(exp, KEY)
     nrep = max(len(v) for v in data.values())
-    lines += [f'## {TITLE.get(exp, exp)}', '', f'`results/stage2/app_{exp}.csv`, 조건마다 {nrep}번 실행의 중앙값. '
+    lines += [f'## {TITLE.get(exp, exp)}', '', f'`results/app_{exp}.csv`, 조건마다 {nrep}번 실행의 중앙값. '
               '처리량은 초당 요청 수, 지연은 µs. 편차는 실행 사이의 (최대 - 최소) / 중앙값.', '']
     lines += ['| 조건 | 지표 | pipe | mq | shm | 순위 | 편차 pipe / mq / shm |', '| --- | --- | --- | --- | --- | --- | --- |']
     for key in keys_of(data):
