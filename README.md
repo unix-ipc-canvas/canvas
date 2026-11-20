@@ -44,18 +44,19 @@ canvas/
 
 IPC는 한 사람이 하나씩 맡고, 공통 코드·보고서·발표는 셋으로 나눈다. 쉬운 IPC에는 무거운 공통 코드를 붙여 양을 맞췄다. 1단계 측정, 2단계 분석, 보고서 6.6절(IPC 선택 가이드라인)과 8.1절(결론)은 담당과 관계없이 셋이 함께 한다. 파일별 책임은 [구현 방향](docs/design/plan.md#구현-방향), 기한은 [단계별 계획](docs/design/plan.md#단계별-계획)을 따른다.
 
-| | A: pipe + 서버 | B: mq + 클라이언트, 예측·문서 총괄 | C: shm + 측정 |
+| | A: pipe + 캔버스 | B: mq + 클라이언트, 예측·문서 총괄 | C: shm + 서버 + 측정 |
 | --- | --- | --- | --- |
 | 팀원 | [@pinoba](https://github.com/pinoba) | [@hyungunoh321](https://github.com/hyungunoh321) | [@Movinggun-bit](https://github.com/Movinggun-bit) |
 | IPC | `transport_pipe.c` | `transport_mq.c` (큰 메시지 분할·재조립, 응답 큐 방식 결정) | `transport_shm.c` (링 버퍼, 슬롯, 세마포어, 알림 방식 결정) |
-| 공통 코드 | `canvas.c`, `server.c` (스레드, 작업 큐, 락 옵션, 종료 처리) | `client.c` (워크로드 생성, CSV 출력), `verify.c` | `util.c`, `bench.c` |
-| 검증·측정 | `verify.sh`의 실행 검사 T-10~T-31 | T-40·T-41, `readme.txt`, `make dist`와 tar 점검 | 측정 스크립트, 그래프, CSV 열 확정, 측정용 컴퓨터 관리 |
+| 공통 코드 | `canvas.c` | `client.c` (워크로드 생성, CSV 출력), `verify.c` | `util.c`, `bench.c`, `server.c` (스레드, 작업 큐, 락 옵션, 종료 처리) |
+| 검증·측정 | | T-40·T-41, `readme.txt`, `make dist`와 tar 점검 | `verify.sh`의 실행 검사 T-10~T-31, 측정 스크립트, 그래프, CSV 열 확정, 측정용 컴퓨터 관리 |
 | 앞장설 단계 | T6 설계 개선 구현 (타일 락, rwlock, 메모리 절감) | T3 워크로드 명세와 예측 | T2 1단계 측정, T5 원인 확인 실험 설계 |
 | 보고서 | 4장, 5장, 6.1, 6.5 | 표지, 1장, 3장, 7장, 8.2 | 2장, 6.2~6.4 |
 | 발표 | 데모 촬영 | 발표자료 취합, 제출 점검 | 측정 결과 슬라이드 |
 | 그 밖 | FIFO를 pipe로 인정하는지 교수님께 확인 | AI 활용 기록 정리 | 측정 환경 기록, 저장소 관리(owner: 헤더 변경 승인, `main` 보호 규칙) |
 
 - 세 사람 모두 11월 15일까지 자기 `transport_*.c`의 기본 송수신을 끝낸다. 늦으면 C의 1단계 측정이 시작되지 못해 예측과 구현이 함께 밀린다.
+- 11월 20일에 `server.c`와 실행 검사 T-10~T-31(#11, #13)을 A에서 C로 옮겼다. 2단계 측정이 서버를 기다리며 밀리고 있어, 측정을 맡은 C가 서버까지 만들고 바로 재기로 했다.
 - 예측을 커밋하기 전에는 A는 `canvas.c`, B는 `verify.c`, C는 `util.c`를 먼저 만든다. `server.c`, `client.c`는 예측 커밋 뒤에 시작한다.
 
 ## 기술 스택
@@ -84,11 +85,11 @@ make
 | `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
 > [!NOTE]
-> 지금은 전송 계층 3개(+ 벤치마크 전용 익명 pipe), 1단계 벤치마크, 클라이언트, 검증기가 있다. 서버는 아직 없어 `make app`은 클라이언트만 만든다.
+> 전송 계층 3개(+ 벤치마크 전용 익명 pipe), 1단계 벤치마크, 서버, 클라이언트, 검증기가 모두 있다.
 
 ## 사용 방법
 
-`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 1단계 벤치마크에는 강의 5장의 익명 pipe로 만든 `bench_upipe`도 있다. 익명 pipe는 fork로 물려받아야 이어지므로 서버·클라이언트는 만들지 않는다. 서버·클라이언트 옵션의 뜻은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다(서버는 서버 담당이 적는다).
+`bin/`에 `bench_<ipc>`, `server_<ipc>`, `client_<ipc>`, `verify`가 생긴다(`<ipc>`는 `pipe`, `mq`, `shm`). 1단계 벤치마크에는 강의 5장의 익명 pipe로 만든 `bench_upipe`도 있다. 익명 pipe는 fork로 물려받아야 이어지므로 서버·클라이언트는 만들지 않는다. 서버·클라이언트 옵션의 뜻은 [실행 옵션](docs/design/README.md#실행-옵션)에 있다. 확정된 실행 예시는 구현한 사람이 이 절에 적는다.
 
 ### 1단계 벤치마크
 
@@ -125,6 +126,29 @@ python3 scripts/compare-bench.py docs/assets/bench/experiments.md results/stage1
 
 `REPS`, `SIZES`, `CLIENTS`, `IPCS`, `INFLIGHT`, `OUT` 환경 변수로 일부만 돌릴 수 있다. 예: `REPS=1 SIZES="64 1048576" CLIENTS="1 8" OUT=/tmp/x scripts/bench.sh`
 
+### 2단계 서버
+
+서버를 먼저 띄운다. 같은 IPC의 서버는 하나만 뜬다(둘째는 stderr에 한 줄을 쓰고 종료 코드 1). 준비되면 stderr에 `준비`를 쓰고, Ctrl+C(SIGINT)나 SIGTERM을 받으면 받은 요청을 모두 처리한 뒤 캔버스를 PGM으로 저장하고 `checksum <16진수>` 한 줄을 stdout에 쓰고 끝난다. 이 줄을 [검증기](#검증기)의 출력과 비교한다.
+
+```bash
+./bin/server_shm                              # 기준 조건: 워커 4, 전역 락
+./bin/server_pipe -w 8 -l tile -t 128         # 워커 8, 128×128 타일마다 mutex
+./bin/server_mq -O /tmp/app.csv -e test       # 끝날 때 서버의 CPU 시간·메모리를 CSV에 한 줄
+```
+
+| 옵션 | 뜻 (기본값) |
+| --- | --- |
+| `-w N` | 워커 스레드 수, 1~64 (4) |
+| `-l S` | 락 방식. `global` 전역 mutex 하나, `tile` 타일마다 mutex, `tile-rw` 타일마다 rwlock(DRAW는 쓰기, SNAPSHOT은 읽기), `none` 락 없음(경쟁 상태 시연 전용) (global) |
+| `-t N` | 타일 한 변, 16~1024의 2의 거듭제곱. `-l tile`, `tile-rw`에서만 뜻이 있다 (64) |
+| `-d` | 작업 큐와 워커 없이 수신 스레드가 직접 처리한다. 큐 비용 확인용 |
+| `-o F` | 끝날 때 캔버스를 저장할 PGM 파일 (`canvas_<ipc>.pgm`) |
+| `-O F` | 끝날 때 CSV F에 서버 줄(`stage=app`, `role=server`) 하나를 덧붙인다. CPU 시간·문맥 교환은 서버가 떠 있던 전체 구간의 값이다 |
+| `-e S`, `-R N`, `-C S` | CSV의 실험 이름, 반복 번호, 커밋(환경 변수 `BENCH_COMMIT`) |
+
+- 스레드는 수신 1개, 워커 `-w`개, 관리 1개다. 잘못된 요청(모르는 종류, 길이가 틀린 payload, 캔버스 밖 좌표)에는 오류 응답을 보내고 캔버스는 바꾸지 않는다.
+- 서버를 재지 않고 띄워 둔 채 클라이언트만 바꿔 가며 돌릴 수 있다. 끝낼 때 받은 요청을 다 처리하므로 체크섬은 그때까지 끝까지 돈 클라이언트들의 요청을 모두 반영한다.
+
 ### 2단계 클라이언트
 
 서버(`server_<ipc>`)를 먼저 띄운 뒤 같은 IPC의 클라이언트를 띄운다. 클라이언트는 워밍업 뒤 정해진 수의 요청을 보내고, 끝나면 통계(왕복 지연, 구간별 시간, 처리량, CPU 시간)를 stdout에 쓴다. `-o`를 주면 CSV에 한 줄(`stage=app`, `role=client`)을 덧붙인다. 재는 방법은 [2단계 실험](docs/measurement/README.md#2단계-실험)을 따른다.
@@ -148,10 +172,21 @@ for i in 0 1 2 3; do ./bin/client_shm -i $i -f 16 -c 4 -o /tmp/app.csv & done; w
 | `-o F` | 결과 CSV 경로 |
 | `-e S`, `-R N`, `-C S` | CSV의 실험 이름(latency 또는 throughput), 반복 번호(1), 커밋(환경 변수 `BENCH_COMMIT`) |
 | `-c N`, `-L S`, `-T N` | CSV의 clients, lock, tile 칸. 서버 설정을 그대로 적는다. 동작은 바꾸지 않는다 |
+| `-G` | 워밍업이 끝나면 stderr에 `준비`를 쓰고 SIGUSR2를 받을 때까지 측정을 미룬다. 여러 클라이언트의 측정 시작을 맞출 때 쓴다 |
 
 - 서버가 받는 요청은 클라이언트마다 HELLO 1 + 워밍업 `-w` + 측정 `-n` + STATS 1 + BYE 1개다. 워밍업은 캔버스를 바꾸지 않으므로 검증기는 측정 요청(시드, `-n`, `-m`, `-r`, `-S`)만 재생하면 된다.
 - Ctrl+C(SIGINT)나 SIGTERM을 받으면 새 요청을 멈추고, 띄워 둔 요청의 응답을 다 받은 뒤 그때까지의 통계를 쓰고 끝난다. 다 재지 못한 실행이라 CSV에 쓰지 않고 종료 코드 1로 끝난다. 서버가 멈춰 응답이 오지 않으면 한 번 더 보내면 남은 응답을 기다리지 않고 바로 끝난다.
 - 서버가 없거나, 같은 번호의 클라이언트가 실행 중이거나, 도중에 서버가 끝나면 stderr에 한 줄을 쓰고 종료 코드 1로 끝난다. 응답의 종류·길이·서버 시각 순서가 어긋나도 오류로 세어 종료 코드 1로 끝난다.
+
+### 2단계 측정
+
+측정용 컴퓨터에서 커밋한 코드로 돌린다. 서버와 클라이언트를 실험 조건마다 새로 띄우고, 모든 클라이언트가 워밍업을 마치면 SIGUSR2로 함께 측정을 시작시킨다. 결과는 `results/app_<실험>.csv`(실행마다 클라이언트 줄들과 서버 줄 하나)와 `results/app_env.txt`다. 실험 목록은 [2단계 실험](docs/measurement/README.md#2단계-실험)에 있다.
+
+```bash
+scripts/app-bench.sh                                      # 전체, 반복 REPS번(기본 10)
+REPS=1 EXPS="base clients" OUT=/tmp/x scripts/app-bench.sh # 일부만, 다른 곳에
+python3 scripts/plot-app.py                               # docs/assets/app/ 에 요약표와 그래프 (matplotlib 필요)
+```
 
 ### 검증기
 
@@ -177,7 +212,7 @@ for i in 0 1 2 3; do ./bin/client_shm -i $i -f 16 -c 4 -o /tmp/app.csv & done; w
 make test
 ```
 
-문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다. 우리 서버가 떠 있지 않을 때 돌린다.
+문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다. 우리 서버가 떠 있지 않을 때 돌린다. 2단계 실행 검사(T-10~T-31)는 `scripts/test-app.sh <ipc>`가 IPC마다 서버와 클라이언트를 띄워 확인하며, 셋을 합쳐 1분쯤 걸린다.
 
 전송 계층 시험(T-04)만 따로 돌리거나 새니타이저로 돌릴 수 있다.
 
