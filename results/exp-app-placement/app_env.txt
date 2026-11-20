@@ -1,0 +1,84 @@
+# scripts/app-bench.sh 가 측정을 시작할 때 기록한 환경
+date: 2026-11-20T18:11:23+09:00
+commit: 71c2074
+reps: 2, ipcs: pipe mq shm, experiments: workers, workers: 1 2 4 8
+
+## lscpu
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      32%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+
+## free -h
+               total        used        free      shared  buff/cache   available
+Mem:            14Gi        10Gi       438Mi       2.6Gi       6.6Gi       4.6Gi
+
+## os
+Ubuntu 26.04.1 LTS
+7.0.0-43-generic
+
+## gcc
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+
+## virtualization
+none
+
+## cpufreq governor
+     12 powersave
+
+## CPU 배치 (taskset 으로 묶었는지)
+pid 375769's current affinity list: 0-11
+
+## IPC 한도
+msgmax: 8192
+msgmnb: 16384
+PIPE_BUF: 4096
+ulimit -n: 1024
+
+## 측정 시작 때 CPU 를 쓰는 프로세스
+ 18:11:23 up 21:23,  1 user,  load average: 7.01, 4.99, 5.04
+top - 18:11:24 up 21:23,  1 user,  load average: 7.01, 4.99, 5.04
+Tasks: 456 total,   2 running, 454 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  3.0 us,  3.3 sy,  0.0 ni, 93.4 id,  0.3 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15156.7 total,    560.1 free,  10376.6 used,   6751.8 buff/cache     
+MiB Swap:   4096.0 total,   2329.0 free,   1767.0 used.   4780.1 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   4602 movingg+  20   0 9486464 297280 174376 S  15.7   1.9  31:58.07 gnome-shell
+  12764 movingg+  20   0 9062868   1.4g   1.4g S   9.8   9.3 100:34.44 qemu-system-x86
+ 375766 movingg+  20   0   19152  12448   7504 S   8.8   0.1   0:00.24 python3
+ 236435 movingg+  20   0  720048  39208  22084 S   3.9   0.3   2:03.80 winedevice.exe
+   5858 movingg+  20   0 1448.8g 382392 210340 S   2.0   2.5  18:41.42 claude-desktop
+ 371049 movingg+  20   0   91200  55876  14068 S   2.0   0.4   0:01.52 nvim
+     15 root      20   0       0      0      0 I   1.0   0.0   0:48.81 rcu_preempt
+    100 root      25   5       0      0      0 S   1.0   0.0   1:21.81 ksmd
+    391 root      20   0       0      0      0 S   1.0   0.0   0:08.51 jbd2/nvme0n1p2-8
+   6073 movingg+  20   0   53.0g 150704 141256 S   1.0   1.0  48:18.40 claude-desktop
+   6403 movingg+  20   0 1455.9g 981.0m 167220 S   1.0   6.5  60:34.80 claude-desktop
+   6715 movingg+  20   0   12.2g 141028  55320 S   1.0   0.9   0:54.46 node
+
+## 측정 끝: 2026-11-20T18:11:53+09:00, 29초, 실행 24 번, 실패 0 번
+
+## 측정 끝 때 CPU 를 쓰는 프로세스
+ 18:11:53 up 21:24,  1 user,  load average: 6.56, 5.07, 5.07
+top - 18:11:55 up 21:24,  1 user,  load average: 6.56, 5.07, 5.07
+Tasks: 459 total,   1 running, 458 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  2.0 us,  2.5 sy,  0.0 ni, 95.3 id,  0.1 wa,  0.0 hi,  0.1 si,  0.0 st 
+MiB Mem :  15156.7 total,    502.0 free,  10534.9 used,   6712.6 buff/cache     
+MiB Swap:   4096.0 total,   2329.0 free,   1767.0 used.   4621.8 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  12764 movingg+  20   0 9062868   1.4g   1.4g S   9.8   9.3 100:35.64 qemu-system-x86
+ 375766 movingg+  20   0   19152  12556   7568 S   9.8   0.1   0:04.54 python3
+ 236435 movingg+  20   0  720048  39208  22084 S   3.9   0.3   2:04.30 winedevice.exe
+ 331541 movingg+  20   0 3506116 616200 135520 S   2.9   4.0   0:39.08 Isolated Web Co
+ 313412 root      20   0       0      0      0 D   2.0   0.0   0:01.87 kworker/u48:0+kec
+ 377791 movingg+  20   0    7780   5756   3660 R   2.0   0.0   0:00.04 top
+     78 root      rt   0       0      0      0 S   1.0   0.0   0:00.85 migration/1
+   1451 root      20   0  240388   7720   4100 S   1.0   0.0  16:32.30 nvidia-powerd
+   1854 root      20   0 2319780  17212   4980 S   1.0   0.1   1:32.00 containerd
+   4602 movingg+  20   0 9485868 297228 174408 S   1.0   1.9  32:00.92 gnome-shell
+   5484 movingg+  20   0  627916  19972  15696 S   1.0   0.1   0:03.18 xdg-desktop-por
+   6073 movingg+  20   0   53.0g 150712 141256 S   1.0   1.0  48:18.70 claude-desktop
