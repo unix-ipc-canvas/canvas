@@ -10,6 +10,12 @@ ok() { echo "PASS  $1  $2"; pass=$((pass + 1)); }
 ng() { echo "FAIL  $1  $2"; fail=$((fail + 1)); }
 sk() { echo "SKIP  $1  $2"; skip=$((skip + 1)); }
 
+# 제한 시간을 걸어 실행한다: tmo 초 명령... 제한 시간에 SIGTERM 을 보내고, 그래도 남으면 5초 뒤 SIGKILL 로 끝낸다.
+# 클라이언트는 첫 SIGTERM 에 남은 응답을 기다리므로, 서버가 멈추면 SIGTERM 만으로는 끝나지 않아 검사 전체가 멈춘다.
+# 제한 시간에 걸리면 종료 코드는 124(SIGTERM 으로 끝남) 또는 137(SIGKILL 로 끝남)이다. timed_out 으로 센다
+tmo() { timeout -k 5 "$@"; }
+timed_out() { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }
+
 log=$(mktemp)
 W=$(mktemp -d)          # 실행 검사(T-10~T-31)의 출력, CSV, PGM
 SP=""                   # 실행 검사에서 띄운 서버의 pid
@@ -76,7 +82,7 @@ else
         sk T-04 "전송 계층 시험: 시험 도구 없음"
     else
         for i in $tp_have; do
-            if timeout 300 scripts/test-transport.sh "$i" >"$log" 2>&1; then
+            if tmo 300 scripts/test-transport.sh "$i" >"$log" 2>&1; then
                 ok T-04 "전송 계층 시험 $i ($(grep -c '^PASS' "$log")개 항목)"
             else
                 ng T-04 "전송 계층 시험 $i"; grep -v '^PASS' "$log"
@@ -91,7 +97,7 @@ else
         for b in $b_have; do
             bad=""
             for args in "-c 1 -s 64 -n 2000 -f 1" "-c 8 -s 4097 -n 800 -f 16" "-c 4 -s $maxp -n 40 -f 4" "-c 2 -s 0 -n 500 -f 8"; do
-                timeout 120 "$b" $args -w 4 -V >"$log" 2>&1 || bad="$bad [$args] $(tail -1 "$log")"
+                tmo 120 "$b" $args -w 4 -V >"$log" 2>&1 || bad="$bad [$args] $(tail -1 "$log")"
             done
             if [ -z "$bad" ]; then ok T-05 "$(basename "$b") -V 내용 검사"; else ng T-05 "$(basename "$b") -V:$bad"; fi
         done
@@ -110,7 +116,7 @@ for t in T-40 T-41; do
 done
 
 # ---- T-10 ~ T-31 실행 검사: 세 버전 각각 서버를 띄워 클라이언트, 검증기, 시험 도구(apptest)로 확인한다 ----
-# CI 제한 시간(5분) 안에 끝나도록 요청 수를 작게 둔다. 클라이언트는 timeout 60 으로 감싼다.
+# CI 제한 시간(5분) 안에 끝나도록 요청 수를 작게 둔다. 클라이언트는 tmo 60 으로 감싼다(맨 위의 tmo 설명).
 
 # 서버를 띄우고 "시작" 줄이 나올 때까지 기다린다. $1 = IPC, 나머지는 서버 옵션. 성공 0
 srv_start() {
@@ -151,13 +157,13 @@ run_clients() {
     local ipc=$1 k=$2 n=$3 pids="" bad=0 c p rc
     shift 3
     for ((c = 0; c < k; c++)); do
-        timeout 60 "bin/client_$ipc" -i "$c" -n "$n" "$@" >"$W/c$c.out" 2>&1 &
+        tmo 60 "bin/client_$ipc" -i "$c" -n "$n" "$@" >"$W/c$c.out" 2>&1 &
         pids="$pids $!"
     done
     for p in $pids; do
         wait "$p"; rc=$?
         [ "$rc" -eq 0 ] || bad=$((bad + 1))
-        [ "$rc" -eq 124 ] && TIMEOUTS=$((TIMEOUTS + 1))
+        timed_out "$rc" && TIMEOUTS=$((TIMEOUTS + 1))
     done
     return $bad
 }
@@ -188,7 +194,7 @@ else
 
         # T-11 잘못된 요청에 오류 응답, 체크섬 변하지 않음
         srv_start "$i"
-        timeout 30 "bin/apptest_$i" bad 5 >"$log" 2>&1; ra=$?
+        tmo 30 "bin/apptest_$i" bad 5 >"$log" 2>&1; ra=$?
         srv_stop; rc=$?
         if [ "$ra" -eq 0 ] && [ "$rc" -eq 0 ] && [ "$(srv_sum)" = "$empty" ]; then
             ok T-11 "$i: $(sed 's/^ok *//' "$log"), 체크섬 그대로"
@@ -225,7 +231,7 @@ else
         # T-22 서버 없이 띄운 클라이언트, 두 번째 서버: 한 줄 오류와 종료 코드 1. 떠 있던 서버는 계속 동작
         "bin/client_$i" -i 3 -n 10 >"$W/o1" 2>"$W/e1"; r1=$?
         srv_start "$i"
-        timeout 10 "bin/server_$i" -p "$W/c2.pgm" >"$W/o2" 2>"$W/e2"; r2=$?   # 잘못 떠도 멈추지 않게
+        tmo 10 "bin/server_$i" -p "$W/c2.pgm" >"$W/o2" 2>"$W/e2"; r2=$?   # 잘못 떠도 멈추지 않게
         run_clients "$i" 1 200 -w 10; cf=$?
         srv_stop; rc=$?
         if [ "$r1" = 1 ] && [ "$(wc -l <"$W/e1")" = 1 ] && [ "$r2" = 1 ] && [ "$(wc -l <"$W/e2")" = 1 ] &&
@@ -295,7 +301,7 @@ else
         run_clients "$i" 4 500 -w 10; cf=$?
         pids=""
         for a in 10 11 12 13; do
-            timeout 60 "bin/apptest_$i" snap "$a" 24 8 4 500 >"$W/a$a.out" 2>&1 &
+            tmo 60 "bin/apptest_$i" snap "$a" 24 8 4 500 >"$W/a$a.out" 2>&1 &
             pids="$pids $!"
         done
         abad=0
@@ -311,13 +317,13 @@ else
         srv_start "$i" -l tile -w 8
         pids=""
         for c in 0 1 2 3 4 5 6 7; do
-            timeout 60 "bin/client_$i" -i "$c" -n 10000000 -f 16 -m 50 -w 0 >"$W/c$c.out" 2>&1 &
+            tmo 60 "bin/client_$i" -i "$c" -n 10000000 -f 16 -m 50 -w 0 >"$W/c$c.out" 2>&1 &
             pids="$pids $!"
         done
         sleep 1
         srv_stop; rc=$?
         cto=0
-        for p in $pids; do wait "$p"; [ $? -eq 124 ] && cto=$((cto + 1)); done
+        for p in $pids; do wait "$p"; timed_out $? && cto=$((cto + 1)); done
         sleep 0.3
         lo=$(leftover)
         if [ "$rc" = 0 ] && [ "$cto" = 0 ] && [ -z "$lo" ]; then
