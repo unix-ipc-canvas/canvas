@@ -1,8 +1,7 @@
 UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
-(제출용 readme. 구현이 진행되면 아래 빈칸을 채운다.)
 
 1. 실행 환경
-   (모든 측정을 한 측정용 컴퓨터. 측정마다 results/.../bench_env.txt 에 같은 내용이 남는다)
+   (모든 측정을 한 측정용 컴퓨터. 측정마다 results/.../bench_env.txt, results/app_env.txt 에 같은 내용이 남는다)
    - OS / 커널: Ubuntu 26.04.1 LTS / 7.0.0-43-generic
    - gcc: gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
    - CPU / 코어 수 / 메모리: Intel Core 5 120U, 10코어(P코어 2개 + E코어 8개) 12스레드 / 메모리 14GiB
@@ -17,7 +16,14 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
    make test       검증 스크립트 실행 (PASS / FAIL / SKIP 출력)
 
 3. 실행
-   (구현 후 작성: 서버 실행, 클라이언트 2개 이상 실행, 종료 방법)
+   서버를 먼저 띄우고(같은 IPC 의 서버는 하나만), 다른 터미널에서 같은 IPC 의 클라이언트를 띄운다.
+     ./bin/server_shm                                 워커 4, 전역 락
+     for i in 0 1 2 3; do ./bin/client_shm -i $i -f 16 & done; wait    클라이언트 4개 (번호는 서로 달라야 한다)
+     ./bin/verify -c 4                                위 4개 클라이언트의 정답 체크섬
+   서버는 Ctrl+C(SIGINT) 또는 kill -TERM 으로 끝낸다. 받은 요청을 다 처리한 뒤 canvas_shm.pgm 을 저장하고
+   "checksum <16진수>" 를 출력한다. 이 값이 verify 의 출력과 같아야 한다.
+   주요 옵션: 서버 -w 워커수 -l global|tile|tile-rw -t 타일한변 -p PGM경로, 클라이언트 -n 요청수 -m DRAW비율 -f 동시요청수
+   (자세한 옵션은 README.md 의 사용 방법)
 
 4. 측정 재현
    1단계 (IPC 기초 성능, 측정용 컴퓨터에서 다른 무거운 프로그램을 끄고 실행)
@@ -29,7 +35,9 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
        뒤 IPCS=mq OUT=results/exp-msgmax-up scripts/bench.sh, 끝나면 sudo sysctl -w kernel.msgmax=8192 kernel.msgmnb=16384
      results/ 바로 아래의 bench_*.csv 는 처음 측정(반복 5번)으로, 성능 예측의 근거다.
    2단계 (응용)
-     (구현 후 작성)
+     scripts/app-bench.sh                       실험 7가지 × IPC 3 × 반복 20번, 약 26분 -> results/app_*.csv, app_env.txt
+     python3 scripts/plot-app.py                그래프와 요약표 -> docs/assets/app/
+     scripts/exp-stage2.sh                      원인 확인 실험(약 10분) -> results/exp-app-*/
 
 5. IPC 자원 확인
    실행 종료 후 ipcs 로 남은 자원이 없는지 확인한다.
