@@ -2,7 +2,7 @@
 # 2단계 측정. 서버와 클라이언트를 띄워 응용의 처리량과 지연을 잰다. 측정용 컴퓨터에서만 돌린다.
 # 실험 목록과 기준 조건의 원본은 docs/measurement/README.md 의 "2단계 실험" 과 docs/records/prediction.md 의 3.1절이다.
 #
-#   scripts/app-bench.sh                                    전체 (반복 REPS 번, 기본 10)
+#   scripts/app-bench.sh                                    전체 (반복 REPS 번, 기본 20. 약 26분)
 #   REPS=1 EXPS="base clients" OUT=/tmp/x scripts/app-bench.sh   일부만, 다른 곳에
 #
 # 결과 (OUT, 기본 results/)
@@ -15,7 +15,7 @@
 set -u
 cd "$(dirname "$0")/.."
 
-REPS=${REPS:-10}
+REPS=${REPS:-20}
 IPCS=${IPCS:-"pipe mq shm"}
 EXPS=${EXPS:-"base type draw clients workers lock tile"}
 WORKERS=${WORKERS:-"1 2 4 8"}       # workers 실험의 워커 수 (원인 확인 실험에서 바꾼다)
