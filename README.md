@@ -25,7 +25,7 @@ canvas/
 │   ├── transport/    # IPC별 전송 계층 (pipe, mq, shm, 벤치마크 전용 익명 pipe upipe)
 │   ├── common/       # 캔버스, 서버, 클라이언트, 검증기
 │   ├── bench/        # 1단계 echo 벤치마크
-│   └── test/         # 전송 계층 시험 도구
+│   └── test/         # 시험 도구 (전송 계층 tptest, 서버 apptest)
 ├── scripts/          # 검증·측정 스크립트
 ├── results/          # 측정 원자료 CSV
 └── docs/
@@ -84,7 +84,7 @@ make
 | `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
 > [!NOTE]
-> 지금은 전송 계층 3개(+ 벤치마크 전용 익명 pipe), 1단계 벤치마크, 서버, 클라이언트, 검증기가 있다. `make test`의 서버·클라이언트 실행 검사(T-10~T-31)는 아직 SKIP이다.
+> 지금은 전송 계층 3개(+ 벤치마크 전용 익명 pipe), 1단계 벤치마크, 서버, 클라이언트, 검증기가 있고 `make test`의 모든 항목이 동작한다.
 
 ## 사용 방법
 
@@ -200,7 +200,7 @@ for i in 0 1 2 3; do ./bin/client_shm -i $i -f 16 -c 4 -o /tmp/app.csv & done; w
 make test
 ```
 
-문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다. 우리 서버가 떠 있지 않을 때 돌린다.
+문서 검사(링크, 요구사항과 테스트의 대응)와 빌드·동작 검사를 실행하고 항목마다 PASS, FAIL, SKIP을 출력한다. 항목과 판정 기준은 [테스트 명세](docs/verification/README.md)를 따른다. SKIP은 검증 완료가 아니다. 우리 서버가 떠 있지 않을 때 돌린다. 서버·클라이언트를 세 버전 각각 여러 번 띄우므로 1~2분 걸린다.
 
 전송 계층 시험(T-04)만 따로 돌리거나 새니타이저로 돌릴 수 있다.
 

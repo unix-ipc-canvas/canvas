@@ -14,7 +14,7 @@ canvas/
 ├── src/transport/    transport_{pipe,mq,shm}.c     (IPC 담당이 1개씩)
 ├── src/common/       canvas, server, client, verify, workload, util
 ├── src/bench/        bench.c                       (1단계 echo 벤치마크)
-├── src/test/         tptest.c                      (전송 계층 시험 도구)
+├── src/test/         tptest.c, apptest.c           (전송 계층·서버 시험 도구)
 ├── scripts/          측정 자동화, 그래프, verify.sh
 └── results/          측정 원자료 CSV
 ```
@@ -36,6 +36,7 @@ canvas/
 | `src/common/util.c` | 시각, 통계, `getrusage`, VmRSS | 측정 담당 |
 | `src/bench/bench.c` | 1단계 echo 벤치마크 | 측정 담당 |
 | `src/test/tptest.c` | 전송 계층 시험 도구. `scripts/test-transport.sh`가 세 버전에 같은 시나리오를 돌린다 | 측정 담당 |
+| `src/test/apptest.c` | 서버 시험 도구. 클라이언트가 만들지 않는 요청(잘못된 요청, 큰 SNAPSHOT의 내용 비교)을 보낸다. `verify.sh`의 T-11, T-15가 쓴다 | 서버 담당 |
 | `scripts/` | 실험 실행, 그래프, `verify.sh` | 측정 담당 |
 
 - `server.c`, `client.c`, `bench.c`에는 IPC 고유 코드(`msgsnd`, `shmat`, `mkfifo` 등)를 넣지 않는다.
