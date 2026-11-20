@@ -32,8 +32,8 @@
 | 5.1 | 소스 주요 부분 | `src/transport/`의 생성·송수신·해제 코드, 락 코드 | |
 | 5.2, 5.3 | 데모 시나리오와 실행 결과 | [데모 시나리오](presentation.md#데모-시나리오), `make test` 출력, `ipcs` 캡처 | |
 | 6.1 | 제한 요소 반영 | [요구사항의 제약](../requirements/README.md#실행-환경과-제약), 메모리 절감 측정 | |
-| 6.2, 6.3 | 응용 측정 방법과 결과 | [측정 방법](../measurement/README.md), `results/app_*.csv` | |
-| 6.4 | 예측 대비 실측, 원인 규명 | [성능 예측](../records/prediction.md)의 예측 번호별 비교, `[Experiment]` 이슈의 가설·결과 | |
+| 6.2, 6.3 | 응용 측정 방법과 결과 | [측정 방법](../measurement/README.md#2단계-실험), [2단계 측정 결과](../measurement/stage2.md), [2단계 측정 요약](../assets/app/summary.md)과 그래프(`results/`에서 `scripts/plot-app.py`가 만든다) | |
+| 6.4 | 예측 대비 실측, 원인 규명 | [2단계 측정 결과의 예측과 비교](../measurement/stage2.md#예측과-비교)와 [원인 확인 실험](../measurement/stage2.md#원인-확인-실험), `results/exp-app-*/` | |
 | 6.5 | 설계 개선 전후 | 개선 전후의 원자료와 그래프 | |
 | 6.6 | IPC 선택 가이드라인 (1쪽 이내) | 6.3~6.5의 결론 | |
 | 7 | 팀워크, 역할, 작업 시간 | [역할 분담](../../README.md#역할-분담), [작업 시간](../records/worklog.csv), GitHub의 커밋·PR 기록 | |
@@ -47,11 +47,12 @@
 
 - [x] 측정 환경 명령 출력: [측정 환경](../assets/captures/stage1-env.png), [IPC 한도](../assets/captures/stage1-ipc-limits.png)
 - [x] 1단계 측정 실행 결과: 처음 측정의 [`scripts/bench.sh` 출력 처음과 끝](../assets/captures/stage1-bench-run.png), 반복 20번 재측정과 실험의 [기록](../assets/captures/stage1-r20-run.png)
-- [ ] 세 버전 각각의 서버·클라이언트 실행 화면
-- [ ] 실행 중과 종료 뒤의 `ipcs`: 1단계 벤치마크로 찍은 [실행 중](../assets/captures/stage1-ipcs-running.png), [측정 뒤](../assets/captures/stage1-ipcs-after.png)가 있다. 응용 데모로 다시 찍는다
-- [ ] `make`와 `make test` 출력: 응용 전(1단계 시점, SKIP 15)의 [make](../assets/captures/stage1-make.png), [make test](../assets/captures/stage1-make-test.png)가 있다. 응용을 넣은 뒤 다시 찍는다
-- [ ] 체크섬 일치와 불일치 장면
-- [ ] 캔버스 이미지
+- [x] 세 버전 각각의 서버·클라이언트 실행 화면: [pipe](../assets/captures/stage2-run-pipe.png), [mq](../assets/captures/stage2-run-mq.png), [shm](../assets/captures/stage2-run-shm.png). 서버, 클라이언트 4개, 서버 종료의 체크섬과 검증기의 체크섬이 같다
+- [x] 실행 중과 종료 뒤의 `ipcs`: 응용 세 버전을 함께 띄운 [실행 중과 종료 뒤](../assets/captures/stage2-ipcs.png). 1단계 벤치마크로 찍은 [실행 중](../assets/captures/stage1-ipcs-running.png), [측정 뒤](../assets/captures/stage1-ipcs-after.png)도 있다
+- [x] `make`와 `make test` 출력: 응용을 넣은 뒤의 [make](../assets/captures/stage2-make.png), [make test](../assets/captures/stage2-make-test.png). 응용 전(1단계 시점, SKIP 15)의 [make](../assets/captures/stage1-make.png), [make test](../assets/captures/stage1-make-test.png)도 있다
+- [x] 체크섬 일치와 불일치 장면: [락 있음은 일치, `-l none`은 불일치](../assets/captures/stage2-checksum.png)
+- [x] 캔버스 이미지: [요청 120개로 그린 데모](../assets/captures/stage2-canvas-demo.png)(클라이언트 2, `-n 60 -m 100 -r 160`), [shm 실행 화면의 캔버스](../assets/captures/stage2-canvas.png)(클라이언트 4 × 기준 조건 20,000개라 값이 고르게 섞여 잡음처럼 보인다)
+- [x] 2단계 측정 실행 기록: [서버 비교, 본 측정, 원인 확인 실험](../assets/captures/stage2-run-record.png)
 - [ ] 주요 AI 대화 기록
 
 ## 제출 전 수동 확인
