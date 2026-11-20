@@ -220,6 +220,7 @@ make test
 make && scripts/test-transport.sh shm              # 고른 IPC 만 (생략하면 셋 다)
 make clean && make EXTRA_CFLAGS='-fsanitize=address,undefined' && scripts/test-transport.sh
 make clean && make EXTRA_CFLAGS='-fsanitize=thread' && scripts/test-transport.sh
+make clean && make EXTRA_CFLAGS='-fsanitize=thread' && TSAN_OPTIONS=detect_deadlocks=0 SKIP_T13=1 scripts/test-app.sh pipe   # 서버·클라이언트
 ```
 
 ## 관련 문서

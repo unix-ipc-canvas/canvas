@@ -96,7 +96,9 @@ if start_server -w 4; then
 else ng T-11 "서버를 띄우지 못함"; fi
 
 # ---- T-13 락을 끄면 어긋날 수 있다 (시연 항목: 어긋나지 않아도 FAIL 이 아니다) ----
+# 새니타이저 빌드에서는 SKIP_T13=1 로 건너뛴다. 일부러 만든 경쟁이라 TSan 이 보고하고, 계측 때문에 몇 분이 걸린다
 diff_n=0; runs=3
+[ "${SKIP_T13:-0}" = 1 ] && runs=0
 for ((r = 1; r <= runs; r++)); do
     start_server -w 8 -l none || continue
     run_clients 4 -n 400 -m 100 -r 1024 -f 8 -w 0
@@ -104,7 +106,7 @@ for ((r = 1; r <= runs; r++)); do
     want=$($V -c 4 -n 400 -m 100 -r 1024 2>/dev/null | sed -n 's/^checksum //p')
     [ "$got" != "$want" ] && diff_n=$((diff_n + 1))
 done
-ok T-13 "-l none, 클라이언트 4·워커 8 이 캔버스 전체에 DRAW: 정답과 어긋난 실행 $diff_n/$runs (관찰 기록)"
+if [ $runs -eq 0 ]; then echo "SKIP  T-13  $ipc: SKIP_T13=1"; else ok T-13 "-l none, 클라이언트 4·워커 8 이 캔버스 전체에 DRAW: 정답과 어긋난 실행 $diff_n/$runs (관찰 기록)"; fi
 
 # ---- T-14 클라이언트 8, 워커 8 에서 제한 시간 안에 끝남 ----
 if start_server -w 8 -l tile; then
