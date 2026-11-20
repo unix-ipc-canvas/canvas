@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 REPS=${REPS:-10}
 IPCS=${IPCS:-"pipe mq shm"}
 EXPS=${EXPS:-"base type draw clients workers lock tile"}
+WORKERS=${WORKERS:-"1 2 4 8"}       # workers 실험의 워커 수 (원인 확인 실험에서 바꾼다)
 OUT=${OUT:-results}
 
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -50,7 +51,7 @@ cpu_snapshot() {
     echo "# scripts/app-bench.sh 가 측정을 시작할 때 기록한 환경"
     echo "date: $(date -Iseconds)"
     echo "commit: $commit"
-    echo "reps: $REPS, ipcs: $IPCS, experiments: $EXPS"
+    echo "reps: $REPS, ipcs: $IPCS, experiments: $EXPS, workers: $WORKERS"
     echo
     echo "## lscpu"; lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz'
     echo; echo "## free -h"; free -h | head -2
@@ -82,7 +83,7 @@ cases_for() {
                  done ;;
         draw)    for c in 1 4; do for m in 70 80 85 90 95 100; do echo "$c 16 4 global 64 $m 256"; done; done ;;
         clients) for c in 1 2 4 8; do echo "$c 16 4 global 64 90 256"; done ;;
-        workers) for w in 1 2 4 8; do echo "8 16 $w global 64 90 256"; done ;;
+        workers) for w in $WORKERS; do echo "8 16 $w global 64 90 256"; done ;;
         lock)    for l in global tile tile-rw; do echo "4 16 4 $l 64 90 256"; done ;;
         tile)    for t in 16 64 256 1024; do echo "4 16 4 tile $t 90 256"; done ;;
         *) echo "모르는 실험: $1" >&2; exit 1 ;;
