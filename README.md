@@ -84,7 +84,7 @@ make
 | `make dist` | 제출용 `osproject_2.tar` 만들기 |
 
 > [!NOTE]
-> 지금은 전송 계층 3개(+ 벤치마크 전용 익명 pipe), 1단계 벤치마크, 클라이언트, 검증기가 있다. 서버는 아직 없어 `make app`은 클라이언트만 만든다.
+> 지금은 전송 계층 3개(+ 벤치마크 전용 익명 pipe), 1단계 벤치마크, 서버, 클라이언트, 검증기가 있다. `make test`의 서버·클라이언트 실행 검사(T-10~T-31)는 아직 SKIP이다.
 
 ## 사용 방법
 
@@ -124,6 +124,29 @@ python3 scripts/compare-bench.py docs/assets/bench/experiments.md results/stage1
 ```
 
 `REPS`, `SIZES`, `CLIENTS`, `IPCS`, `INFLIGHT`, `OUT` 환경 변수로 일부만 돌릴 수 있다. 예: `REPS=1 SIZES="64 1048576" CLIENTS="1 8" OUT=/tmp/x scripts/bench.sh`
+
+### 2단계 서버
+
+서버를 띄우면 Ctrl+C(SIGINT)나 SIGTERM을 받을 때까지 요청을 처리한다. 끝날 때 캔버스를 PGM으로 저장하고, stdout에 `checksum <16진수>`(검증기와 같은 형식), 처리 건수, 실행 전체의 CPU 시간·컨텍스트 스위치·VmRSS를 쓴다. 이때 만든 IPC 자원과 FIFO를 모두 지운다.
+
+```bash
+make app
+./bin/server_pipe                                  # 기준 조건: 워커 4, 전역 락
+./bin/server_shm -w 8 -l tile -t 16                # 워커 8, 타일 락, 타일 16 × 16
+./bin/server_mq -l tile-rw -p /tmp/mq.pgm          # 타일 rwlock, PGM 경로 지정
+```
+
+| 옵션 | 뜻 (기본값) |
+| --- | --- |
+| `-w N` | 워커 수, 1~64 (4) |
+| `-l S` | 락 방식 `global`, `tile`, `tile-rw`, `none` (global). `none`은 경쟁 상태 시연 전용이다 |
+| `-t N` | 타일 한 변, 16~1024의 2의 거듭제곱 (64). `tile`, `tile-rw`에서만 뜻이 있다 |
+| `-d` | 작업 큐와 워커 없이 수신 스레드가 직접 처리한다(큐 비용 확인용) |
+| `-p F` | 끝날 때 저장할 PGM 경로 (`canvas_<ipc>.pgm`) |
+
+- 서버는 IPC마다 하나만 띄울 수 있다. 이미 떠 있으면 stderr에 한 줄을 쓰고 종료 코드 1로 끝나며, 떠 있는 서버의 자원은 건드리지 않는다.
+- 캔버스를 벗어나거나 크기가 0인 요청에는 오류로 응답하고 캔버스를 바꾸지 않는다.
+- 멈춘 클라이언트(Ctrl+Z 등)가 있으면 첫 Ctrl+C로는 그 응답을 기다리느라 끝나지 않는다. 한 번 더 보내면 기다리지 않고 자원을 지운 뒤 종료 코드 1로 끝난다(PGM 저장과 체크섬 출력 없음).
 
 ### 2단계 클라이언트
 
