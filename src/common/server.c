@@ -45,6 +45,10 @@
  *   EMSGSIZE 를 돌려주며, 어느 요청인지 알 수 없어 응답하지 않고 버린 수만 센다. 응용 클라이언트는 만들지 않는 요청이다.
  *   payload 길이가 종류와 맞지 않거나, 영역이 캔버스를 벗어나거나 w·h 가 0 이거나, 모르는 종류면 RESP_ERROR 로 응답한다(F-5).
  * DECISION: -d 이면 워커를 만들지 않고 수신 스레드가 꺼낸 자리에서 처리한다. t_deq 는 t_recv 바로 뒤에 찍는다.
+ * DECISION: -O 를 주면 끝날 때 서버 프로세스의 자원 사용량을 CSV 에 한 줄(stage=app, role=server) 붙인다(측정 방법의
+ *   자원 사용량: 서버와 클라이언트 양쪽에서 잰다). 서버는 클라이언트의 측정 구간을 모르므로 구간은 스레드를 만들기
+ *   직전부터 모두 거둔 뒤까지다(elapsed_s, CPU 시간, 컨텍스트 스위치). n 은 성공한 DRAW + SNAPSHOT 수(클라이언트의 워밍업 포함), clients 는
+ *   실행 동안 HELLO 를 보낸 서로 다른 번호의 수다. 오류로 끝난 실행은 쓰지 않는다.
  */
 #include <errno.h>
 #include <inttypes.h>
@@ -85,6 +89,8 @@ static struct {
     uint32_t         tile;
     bool             direct;
     const char      *pgm;
+    const char      *csv, *exp, *commit;    /* -O, -e, -C */
+    long             run;           /* -R */
     canvas_t        *cv;
     uint8_t        **buf;           /* 워커마다(-d 이면 수신 스레드 하나) MAX_PAYLOAD 응답 버퍼 */
 
@@ -99,6 +105,7 @@ static struct {
     _Atomic uint64_t n_draw, n_snap, bytes_sent, n_err, n_drop, n_gone;
     atomic_bool      connected[MAX_CLIENTS];
     _Atomic uint32_t n_clients;
+    _Atomic uint32_t seen;          /* HELLO 를 보낸 적 있는 번호 (CSV 의 clients) */
 
     /* 끝내기 */
     pthread_mutex_t  err_mtx;
@@ -193,6 +200,7 @@ static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
     switch (j->hdr.type) {
     case REQ_HELLO:
         if (!atomic_exchange(&S.connected[id], true)) atomic_fetch_add(&S.n_clients, 1);
+        atomic_fetch_or(&S.seen, 1u << id);
         ts.t_lock = now_ns();
         break;
 
@@ -331,7 +339,8 @@ static void *admin_main(void *arg)
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: server_%s [-w 워커수] [-l global|tile|tile-rw|none] [-t 타일] [-d] [-p PGM경로]\n", tp_name());
+            "usage: server_%s [-w 워커수] [-l global|tile|tile-rw|none] [-t 타일] [-d] [-p PGM경로]\n"
+            "       [-O CSV -e 실험 -R 반복 -C 커밋]   끝날 때 서버 자원 사용량을 CSV 에 한 줄 (커밋 기본: BENCH_COMMIT)\n", tp_name());
 }
 
 static bool parse_uint(const char *s, unsigned long lo, unsigned long hi, unsigned long *out)
@@ -362,10 +371,12 @@ int main(int argc, char **argv)
     S.lock = LOCK_GLOBAL;
     S.tile = TILE_DEFAULT;
     S.pgm = pgm_default;
+    S.run = 1;
+    S.commit = getenv("BENCH_COMMIT");
 
     int opt;
     unsigned long v;
-    while ((opt = getopt(argc, argv, "w:l:t:dp:h")) != -1) {
+    while ((opt = getopt(argc, argv, "w:l:t:dp:O:e:R:C:h")) != -1) {
         switch (opt) {
         case 'w':
             if (!parse_uint(optarg, 1, MAX_WORKERS, &v)) {
@@ -389,6 +400,16 @@ int main(int argc, char **argv)
             break;
         case 'd': S.direct = true; break;
         case 'p': S.pgm = optarg; break;
+        case 'O': S.csv = optarg; break;
+        case 'e': S.exp = optarg; break;
+        case 'R':
+            if (!parse_uint(optarg, 0, 1000000, &v)) {
+                fprintf(stderr, "server: -R 은 0~1000000 이다\n");
+                return 1;
+            }
+            S.run = (long)v;
+            break;
+        case 'C': S.commit = optarg; break;
         case 'h': usage(); return 0;
         default: usage(); return 1;
         }
@@ -431,6 +452,7 @@ int main(int argc, char **argv)
     pthread_detach(admin);
     unsigned nwk = 0;
     int e = 0;
+    uint64_t t_start = now_ns();
     if (!S.direct) {
         for (; nwk < S.workers; nwk++)
             if ((e = pthread_create(&wk[nwk], NULL, worker_main, S.buf[nwk])) != 0) break;
@@ -447,6 +469,7 @@ int main(int argc, char **argv)
 
     if (have_recv) pthread_join(rx, NULL);
     for (unsigned i = 0; i < nwk; i++) pthread_join(wk[i], NULL);
+    uint64_t t_stop = now_ns();
 
     /*
      * 송수신하던 스레드가 모두 끝났다. PGM 저장과 체크섬 출력 → tp_server_close (설계 명세의 종료 순서).
@@ -474,6 +497,33 @@ int main(int argc, char **argv)
     printf("  CPU 사용자 %.3fs, 커널 %.3fs, 컨텍스트 스위치 자발 %ld, 비자발 %ld, VmRSS %ld kB, VmHWM %ld kB\n",
            u.utime_s, u.stime_s, u.nvcsw, u.nivcsw, rss, hwm);
     fflush(stdout);
+
+    if (S.csv && rc == 0) {
+        csv_row_t row;
+        csv_row_init(&row);
+        row.stage = "app";
+        row.ipc = tp_name();
+        row.role = "server";
+        row.experiment = S.exp;
+        row.commit = S.commit;
+        row.run = S.run;
+        row.clients = __builtin_popcount(atomic_load(&S.seen));
+        row.workers = S.direct ? 0 : (long)S.workers;
+        row.lock = lock_mode_name(S.lock);
+        row.tile = S.tile;
+        row.n = (long)(atomic_load(&S.n_draw) + atomic_load(&S.n_snap));
+        row.elapsed_s = (double)(t_stop - t_start) / 1e9;
+        row.utime_s = u.utime_s;
+        row.stime_s = u.stime_s;
+        row.nvcsw = u.nvcsw;
+        row.nivcsw = u.nivcsw;
+        row.vmrss_kb = rss;
+        row.vmhwm_kb = hwm;
+        if (csv_append(S.csv, &row) < 0) {
+            fprintf(stderr, "server_%s: %s 에 쓰지 못함: %s\n", tp_name(), S.csv, err_str(errno, eb, sizeof eb));
+            rc = 1;
+        }
+    }
 
     if (S.err[0]) fprintf(stderr, "server_%s: %s\n", tp_name(), S.err);
     else fprintf(stderr, "server_%s: %s 로 끝남. 캔버스를 %s 에 저장했다\n", tp_name(),

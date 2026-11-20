@@ -116,6 +116,7 @@ done
 srv_start() {
     local ipc=$1 _
     shift
+    rm -f "$W/srv.err"      # 앞 서버의 "시작" 을 새 서버의 것으로 읽지 않게. 2> 가 파일을 비우기 전에 grep 이 읽을 수 있다
     "bin/server_$ipc" -p "$W/c.pgm" "$@" >"$W/srv.out" 2>"$W/srv.err" &
     SP=$!
     for _ in $(seq 50); do
@@ -224,7 +225,7 @@ else
         # T-22 서버 없이 띄운 클라이언트, 두 번째 서버: 한 줄 오류와 종료 코드 1. 떠 있던 서버는 계속 동작
         "bin/client_$i" -i 3 -n 10 >"$W/o1" 2>"$W/e1"; r1=$?
         srv_start "$i"
-        "bin/server_$i" -p "$W/c2.pgm" >"$W/o2" 2>"$W/e2"; r2=$?
+        timeout 10 "bin/server_$i" -p "$W/c2.pgm" >"$W/o2" 2>"$W/e2"; r2=$?   # 잘못 떠도 멈추지 않게
         run_clients "$i" 1 200 -w 10; cf=$?
         srv_stop; rc=$?
         if [ "$r1" = 1 ] && [ "$(wc -l <"$W/e1")" = 1 ] && [ "$r2" = 1 ] && [ "$(wc -l <"$W/e2")" = 1 ] &&

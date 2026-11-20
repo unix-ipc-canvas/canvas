@@ -143,6 +143,8 @@ make app
 | `-t N` | 타일 한 변, 16~1024의 2의 거듭제곱 (64). `tile`, `tile-rw`에서만 뜻이 있다 |
 | `-d` | 작업 큐와 워커 없이 수신 스레드가 직접 처리한다(큐 비용 확인용) |
 | `-p F` | 끝날 때 저장할 PGM 경로 (`canvas_<ipc>.pgm`) |
+| `-O F` | 끝날 때 CSV F에 서버 줄(`stage=app`, `role=server`) 하나를 덧붙인다. CPU 시간·컨텍스트 스위치는 스레드를 만든 때부터 거둔 때까지의 값이다 |
+| `-e S`, `-R N`, `-C S` | `-O` 줄의 실험 이름, 반복 번호(1), 커밋(환경 변수 `BENCH_COMMIT`) |
 
 - 서버는 IPC마다 하나만 띄울 수 있다. 이미 떠 있으면 stderr에 한 줄을 쓰고 종료 코드 1로 끝나며, 떠 있는 서버의 자원은 건드리지 않는다.
 - 캔버스를 벗어나거나 크기가 0인 요청에는 오류로 응답하고 캔버스를 바꾸지 않는다.
@@ -171,10 +173,23 @@ for i in 0 1 2 3; do ./bin/client_shm -i $i -f 16 -c 4 -o /tmp/app.csv & done; w
 | `-o F` | 결과 CSV 경로 |
 | `-e S`, `-R N`, `-C S` | CSV의 실험 이름(latency 또는 throughput), 반복 번호(1), 커밋(환경 변수 `BENCH_COMMIT`) |
 | `-c N`, `-L S`, `-T N` | CSV의 clients, lock, tile 칸. 서버 설정을 그대로 적는다. 동작은 바꾸지 않는다 |
+| `-G` | 워밍업이 끝나면 stderr에 `준비`를 쓰고 SIGUSR2를 받을 때까지 측정을 미룬다. 여러 클라이언트의 측정 시작을 맞출 때 쓴다 |
 
 - 서버가 받는 요청은 클라이언트마다 HELLO 1 + 워밍업 `-w` + 측정 `-n` + STATS 1 + BYE 1개다. 워밍업은 캔버스를 바꾸지 않으므로 검증기는 측정 요청(시드, `-n`, `-m`, `-r`, `-S`)만 재생하면 된다.
 - Ctrl+C(SIGINT)나 SIGTERM을 받으면 새 요청을 멈추고, 띄워 둔 요청의 응답을 다 받은 뒤 그때까지의 통계를 쓰고 끝난다. 다 재지 못한 실행이라 CSV에 쓰지 않고 종료 코드 1로 끝난다. 서버가 멈춰 응답이 오지 않으면 한 번 더 보내면 남은 응답을 기다리지 않고 바로 끝난다.
 - 서버가 없거나, 같은 번호의 클라이언트가 실행 중이거나, 도중에 서버가 끝나면 stderr에 한 줄을 쓰고 종료 코드 1로 끝난다. 응답의 종류·길이·서버 시각 순서가 어긋나도 오류로 세어 종료 코드 1로 끝난다.
+
+### 2단계 측정
+
+측정용 컴퓨터에서 커밋한 코드로 돌린다. 서버와 클라이언트를 실험 조건마다 새로 띄우고, 모든 클라이언트가 워밍업을 마치면 SIGUSR2로 함께 측정을 시작시킨다. 결과는 `results/app_<실험>.csv`(실행마다 클라이언트 줄들과 서버 줄 하나)와 `results/app_env.txt`다. 실험 목록은 [2단계 실험](docs/measurement/README.md#2단계-실험), 결과는 [2단계 측정 결과](docs/measurement/stage2.md)에 있다.
+
+```bash
+scripts/app-bench.sh                                      # 전체, 반복 REPS번(기본 20, 약 26분)
+REPS=1 EXPS="base clients" OUT=/tmp/x scripts/app-bench.sh # 일부만, 다른 곳에
+python3 scripts/plot-app.py                               # docs/assets/app/ 에 요약표와 그래프 (matplotlib 필요)
+scripts/exp-stage2.sh                                     # CPU 배치·워커 수를 바꾼 원인 확인 실험 → results/exp-app-*/
+python3 scripts/plot-app.py results/exp-app-pcore-mix docs/assets/app/exp-app-pcore-mix   # 실험 요약
+```
 
 ### 검증기
 
@@ -234,6 +249,7 @@ make clean && make EXTRA_CFLAGS='-fsanitize=thread' && scripts/test-transport.sh
 | [설계 명세](docs/design/README.md) | 채널, 스레드, 공유 자원과 동기화, 실행 옵션 |
 | [측정 방법](docs/measurement/README.md) | 타임스탬프 위치, 통계, 자원 사용량, 원자료 형식 |
 | [1단계 측정 결과](docs/measurement/stage1.md) | 1단계 측정 기록, 결과, 해석과 확인할 가설 |
+| [2단계 측정 결과](docs/measurement/stage2.md) | 2단계 측정 기록, 결과, 원인 확인 실험, 예측과 비교 |
 | [테스트 명세](docs/verification/README.md) | 검증 항목과 판정 기준 |
 
 ### 협업
