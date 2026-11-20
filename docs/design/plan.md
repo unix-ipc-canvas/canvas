@@ -29,13 +29,14 @@ canvas/
 | `src/transport/transport_shm.c` | System V shared memory + semaphore 구현 | shm 담당 |
 | `src/transport/transport_upipe.c` | 익명 pipe 구현. 1단계 벤치마크 전용 | 측정 담당 |
 | `src/common/canvas.c` | 캔버스, 타일 락, PGM 저장, 체크섬 | 서버 담당 |
-| `src/common/server.c` | 수신·워커·관리 스레드, 작업 큐, 종료 처리 | 서버 담당 |
+| `src/common/server.c` | 수신·워커·관리 스레드, 작업 큐, 종료 처리 | 측정 담당 |
 | `src/common/client.c` | 송신·수신·통계 스레드, CSV 출력 | 클라이언트 담당 |
 | `src/common/workload.c`, `include/workload.h` | 시드와 옵션(`-m`, `-r`, `-S`)으로 요청열을 만든다. `client.c`와 `verify.c`가 같은 요청열을 만들도록 한 곳에 둔다 | 클라이언트 담당 |
 | `src/common/verify.c` | 정답 체크섬 계산 | 클라이언트 담당 |
 | `src/common/util.c` | 시각, 통계, `getrusage`, VmRSS | 측정 담당 |
 | `src/bench/bench.c` | 1단계 echo 벤치마크 | 측정 담당 |
 | `src/test/tptest.c` | 전송 계층 시험 도구. `scripts/test-transport.sh`가 세 버전에 같은 시나리오를 돌린다 | 측정 담당 |
+| `src/test/apptest.c` | 2단계 시험용 클라이언트. 잘못된 요청, STATS 조회, 정답과 비교하는 SNAPSHOT. `scripts/test-app.sh`가 쓴다 | 측정 담당 |
 | `scripts/` | 실험 실행, 그래프, `verify.sh` | 측정 담당 |
 
 - `server.c`, `client.c`, `bench.c`에는 IPC 고유 코드(`msgsnd`, `shmat`, `mkfifo` 등)를 넣지 않는다.
@@ -46,7 +47,7 @@ canvas/
 
 ## 담당
 
-팀원별 IPC, 공통 코드, 보고서·발표 담당은 [README의 역할 분담](../../README.md#역할-분담)에서 관리한다. 위 표의 서버 담당은 A, 클라이언트 담당은 B, 측정 담당은 C다.
+팀원별 IPC, 공통 코드, 보고서·발표 담당은 [README의 역할 분담](../../README.md#역할-분담)에서 관리한다. 위 표의 서버 담당은 A, 클라이언트 담당은 B, 측정 담당은 C다. `server.c`는 11월 20일에 A에서 C로 옮겼다.
 
 ## 단계별 계획
 
