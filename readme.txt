@@ -35,8 +35,9 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
        뒤 IPCS=mq OUT=results/exp-msgmax-up scripts/bench.sh, 끝나면 sudo sysctl -w kernel.msgmax=8192 kernel.msgmnb=16384
      results/ 바로 아래의 bench_*.csv 는 처음 측정(반복 5번)으로, 성능 예측의 근거다.
    2단계 (응용)
-     REPS=20 scripts/app-bench.sh               실험 7가지 × IPC 3 × 반복 20번 -> results/app_*.csv, app_env.txt
+     REPS=20 scripts/app-bench.sh               실험 7가지 × IPC 3 × 반복 20번, 약 26분 -> results/app_*.csv, app_env.txt
      python3 scripts/plot-app.py                그래프와 요약표 -> docs/assets/app/
+     scripts/exp-stage2.sh                      원인 확인 실험(약 10분) -> results/exp-app-*/
 
 5. IPC 자원 확인
    실행 종료 후 ipcs 로 남은 자원이 없는지 확인한다.

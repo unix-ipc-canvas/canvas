@@ -120,6 +120,7 @@ sequenceDiagram
 - 기준 조건: DRAW 90%, `-r 16`, `-S 256`, 클라이언트 4, 워커 4, `-l global`, `-t 64`, 클라이언트마다 측정 요청 20,000개(워밍업 500). 처리량은 `-f 16`, 지연은 `-f 1`.
 - SNAPSHOT만 보내는 실행은 응답이 커서 요청 수를 줄인다: `-S` 256은 10,000개, 512는 4,000개, 1024는 2,000개(워밍업 200, 100, 30).
 - 표에 없는 요인은 기준값이다. 처리량은 `-f 16`, 요청 종류별 비용만 지연(`-f 1`)도 잰다.
+- 측정 기록, 결과, 원인 확인 실험(`scripts/exp-stage2.sh`), 예측과의 비교는 [2단계 측정 결과](stage2.md)에 있다.
 
 | 실험 | 바꾸는 요인 | 값 | 보려는 것 |
 | --- | --- | --- | --- |
@@ -215,6 +216,7 @@ utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
 - 해당 없는 칸은 비운다. 1단계에는 `workers`부터 `snap`까지와 구간별 시간이 없다.
 - 클라이언트 프로세스 여럿이 같은 파일에 써도 줄이 섞이지 않게 `csv_append`(`util.c`)가 파일 잠금을 걸고 쓴다. 2단계 `client.c`도 이 함수를 쓴다. 머리글이 다른 파일(열을 바꾸기 전에 잰 결과)에는 덧붙이지 않고 실패한다.
 - 1단계 파일: `results/bench_latency.csv`, `results/bench_throughput.csv`, `results/bench_clock.csv`, 측정 환경 `results/bench_env.txt`. 처음 측정(반복 5번, 성능 예측의 근거)은 `results/` 바로 아래, 반복 20번으로 다시 잰 것은 `results/stage1-r20/`, 원인 확인 실험은 `results/exp-<실험>/`에 같은 이름으로 둔다([1단계 측정 결과](stage1.md#측정-기록)).
+- 2단계 파일: `results/app_<실험>.csv`, 측정 환경 `results/app_env.txt`. 원인 확인 실험은 `results/exp-app-<실험>/`에 같은 이름으로 두고, 스레드 배치 표본은 `results/exp-app-placement/placement.jsonl`이다([2단계 측정 결과](stage2.md#측정-기록)).
 - 실험의 비교 표는 `scripts/compare-bench.py`가 `docs/assets/bench/experiments.md`로 만든다.
 - 그래프는 이 CSV에서만 만든다. 축 이름과 단위(µs, ms, MB/s)를 표시하고, 같은 조건의 세 IPC를 한 그래프에 그린다.
 

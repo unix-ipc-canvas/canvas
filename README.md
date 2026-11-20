@@ -183,9 +183,11 @@ for i in 0 1 2 3; do ./bin/client_shm -i $i -f 16 -c 4 -o /tmp/app.csv & done; w
 측정용 컴퓨터에서 커밋한 코드로 돌린다. 서버와 클라이언트를 실험 조건마다 새로 띄우고, 모든 클라이언트가 워밍업을 마치면 SIGUSR2로 함께 측정을 시작시킨다. 결과는 `results/app_<실험>.csv`(실행마다 클라이언트 줄들과 서버 줄 하나)와 `results/app_env.txt`다. 실험 목록은 [2단계 실험](docs/measurement/README.md#2단계-실험)에 있다.
 
 ```bash
-scripts/app-bench.sh                                      # 전체, 반복 REPS번(기본 10)
+scripts/app-bench.sh                                      # 전체, 반복 REPS번(기본 20, 약 26분)
 REPS=1 EXPS="base clients" OUT=/tmp/x scripts/app-bench.sh # 일부만, 다른 곳에
 python3 scripts/plot-app.py                               # docs/assets/app/ 에 요약표와 그래프 (matplotlib 필요)
+scripts/exp-stage2.sh                                     # CPU 배치·워커 수를 바꾼 원인 확인 실험 → results/exp-app-*/
+python3 scripts/plot-app.py results/exp-app-pcore-mix docs/assets/app/exp-app-pcore-mix   # 실험 요약
 ```
 
 ### 검증기
@@ -247,6 +249,7 @@ make clean && make EXTRA_CFLAGS='-fsanitize=thread' && TSAN_OPTIONS=detect_deadl
 | [설계 명세](docs/design/README.md) | 채널, 스레드, 공유 자원과 동기화, 실행 옵션 |
 | [측정 방법](docs/measurement/README.md) | 타임스탬프 위치, 통계, 자원 사용량, 원자료 형식 |
 | [1단계 측정 결과](docs/measurement/stage1.md) | 1단계 측정 기록, 결과, 해석과 확인할 가설 |
+| [2단계 측정 결과](docs/measurement/stage2.md) | 2단계 측정 기록, 결과, 원인 확인 실험, 예측과 비교 |
 | [테스트 명세](docs/verification/README.md) | 검증 항목과 판정 기준 |
 
 ### 협업

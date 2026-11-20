@@ -32,8 +32,8 @@
 | 5.1 | 소스 주요 부분 | `src/transport/`의 생성·송수신·해제 코드, 락 코드 | |
 | 5.2, 5.3 | 데모 시나리오와 실행 결과 | [데모 시나리오](presentation.md#데모-시나리오), `make test` 출력, `ipcs` 캡처 | |
 | 6.1 | 제한 요소 반영 | [요구사항의 제약](../requirements/README.md#실행-환경과-제약), 메모리 절감 측정 | |
-| 6.2, 6.3 | 응용 측정 방법과 결과 | [측정 방법](../measurement/README.md), `results/app_*.csv` | |
-| 6.4 | 예측 대비 실측, 원인 규명 | [성능 예측](../records/prediction.md)의 예측 번호별 비교, `[Experiment]` 이슈의 가설·결과 | |
+| 6.2, 6.3 | 응용 측정 방법과 결과 | [측정 방법](../measurement/README.md#2단계-실험), [2단계 측정 결과](../measurement/stage2.md), [2단계 측정 요약](../assets/app/summary.md)과 그래프(`results/`에서 `scripts/plot-app.py`가 만든다) | |
+| 6.4 | 예측 대비 실측, 원인 규명 | [2단계 측정 결과의 예측과 비교](../measurement/stage2.md#예측과-비교)와 [원인 확인 실험](../measurement/stage2.md#원인-확인-실험), `results/exp-app-*/` | |
 | 6.5 | 설계 개선 전후 | 개선 전후의 원자료와 그래프 | |
 | 6.6 | IPC 선택 가이드라인 (1쪽 이내) | 6.3~6.5의 결론 | |
 | 7 | 팀워크, 역할, 작업 시간 | [역할 분담](../../README.md#역할-분담), [작업 시간](../records/worklog.csv), GitHub의 커밋·PR 기록 | |
