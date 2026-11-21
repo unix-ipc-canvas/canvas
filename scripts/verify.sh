@@ -297,11 +297,19 @@ else
         else ok T-13 "$i: 관찰 - 이번 실행에서는 어긋나지 않음 (FAIL 아님)"; fi
 
         # T-15 그린 뒤 apptest 4개가 동시 8개씩 큰 SNAPSHOT 을 받아 정답 캔버스와 비교.
-        # pipe 는 FIFO 버퍼를 1MB 로 키운 서버(OSP_PIPE_SZ, 설계 개선 실험)로도 한 번 더 본다
-        szs="-"; [ "$i" = pipe ] && szs="- 1048576"
-        for sz in $szs; do
-            if [ "$sz" = - ]; then srv_start "$i" -l tile -w 8; tag=""
-            else OSP_PIPE_SZ=$sz srv_start "$i" -l tile -w 8; tag=" OSP_PIPE_SZ=$sz"; fi
+        # 설계 개선 실험의 서버 환경으로도 한 번 더 본다: pipe 는 FIFO 버퍼 1MB(OSP_PIPE_SZ),
+        # shm 은 요청·응답 링을 가장 큰 메시지 1개(칸 4096B 로 257칸)로 줄인 것(OSP_SHM_*_CHUNKS). 쉼표로 여러 변수
+        envs="-"
+        [ "$i" = pipe ] && envs="- OSP_PIPE_SZ=1048576"
+        [ "$i" = shm ] && envs="- OSP_SHM_REQ_CHUNKS=257,OSP_SHM_RESP_CHUNKS=257"
+        for ev in $envs; do
+            tag=""
+            if [ "$ev" != - ]; then
+                for kv in ${ev//,/ }; do export "$kv"; done
+                tag=" $ev"
+            fi
+            srv_start "$i" -l tile -w 8
+            if [ "$ev" != - ]; then for kv in ${ev//,/ }; do unset "${kv%%=*}"; done; fi
             run_clients "$i" 4 500 -w 10; cf=$?
             pids=""
             for a in 10 11 12 13; do
