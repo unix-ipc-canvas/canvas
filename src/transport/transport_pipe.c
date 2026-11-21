@@ -12,7 +12,13 @@
  *   - 요청이 PIPE_BUF(4096B) 이하이면 write 한 번으로 보낸다. 커널이 원자성을 보장하므로 잠금이 없다.
  *   - 요청이 PIPE_BUF 를 넘으면(1단계 벤치마크의 큰 메시지) 잠금 파일에 fcntl 쓰기 잠금을 걸고 보낸다.
  *   - 응답은 클라이언트별 mutex 를 잡고 보낸다. 큰 응답이 여러 번의 write 로 나뉘어도 섞이지 않는다.
+ *
+ * 버퍼 크기 (설계 개선 실험, docs/design/README.md#실행-옵션)
+ *   환경 변수 OSP_PIPE_SZ(바이트)를 주면 서버가 요청 FIFO 와 응답 FIFO 의 버퍼를 그 크기로 바꾼다(F_SETPIPE_SZ).
+ *   주지 않으면 커널 기본값(64KB)이다. 버퍼가 차면 쓰는 쪽이 잠들고 읽는 쪽이 비우면 깨어나므로,
+ *   버퍼보다 큰 응답은 버퍼 하나를 넘길 때마다 양쪽이 한 번씩 잠든다(1단계 측정).
  */
+#define _GNU_SOURCE             /* F_SETPIPE_SZ */
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -22,6 +28,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -233,6 +240,34 @@ static int srv_resp_fd[MAX_CLIENTS];             /* 응답 FIFO 쓰기 끝. 처�
 static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static int srv_opened;
+static int srv_pipe_sz;                          /* OSP_PIPE_SZ. 0 이면 커널 기본값 그대로 */
+
+/*
+ * OSP_PIPE_SZ 를 읽는다. 없거나 비어 있으면 0. 숫자가 아니거나 4096 ~ 1GB 밖이면 -1, errno = EINVAL.
+ * DECISION: 서버만 읽는다. FIFO 버퍼는 FIFO 하나에 하나라 어느 쪽에서 바꿔도 같고,
+ *   서버가 정하면 실험마다 서버 한 곳의 환경만 바꾸면 된다(shm 의 OSP_SHM_* 와 같은 방식).
+ */
+static int pipe_sz_from_env(void)
+{
+    const char *s = getenv("OSP_PIPE_SZ");
+    if (!s || !*s) return 0;
+    char *end;
+    errno = 0;
+    unsigned long v = strtoul(s, &end, 10);
+    if (errno || *end || v < 4096 || v > (1ul << 30)) { errno = EINVAL; return -1; }
+    return (int)v;
+}
+
+/*
+ * fd 가 가리키는 FIFO 의 버퍼를 srv_pipe_sz 로 바꾼다. 0 이면 아무것도 하지 않는다.
+ * 커널이 쪽 수를 2의 거듭제곱으로 올려 잡는다. 관리자가 아니면 /proc/sys/fs/pipe-max-size(기본 1MB)가 한도이고,
+ * 넘거나 사용자별 한도(pipe-user-pages-soft)에 걸리면 EPERM 이다.
+ */
+static int apply_pipe_sz(int fd)
+{
+    if (srv_pipe_sz == 0) return 0;
+    return fcntl(fd, F_SETPIPE_SZ, srv_pipe_sz) < 0 ? -1 : 0;
+}
 
 int tp_server_open(void)
 {
@@ -241,6 +276,8 @@ int tp_server_open(void)
     lock_path(lp);
 
     ignore_sigpipe();
+    srv_pipe_sz = pipe_sz_from_env();
+    if (srv_pipe_sz < 0) { srv_pipe_sz = 0; return -1; }
     if (make_fifo(rp) < 0) return -1;           /* 서버가 이미 떠 있으면 EADDRINUSE */
 
     /*
@@ -252,6 +289,7 @@ int tp_server_open(void)
      */
     srv_req_fd = open(rp, O_RDWR);
     if (srv_req_fd < 0) goto fail;
+    if (apply_pipe_sz(srv_req_fd) < 0) goto fail;
 
     /* 깨우기 전용 쓰기 끝. 막히지 않게 따로 연다 (O_NONBLOCK 은 열린 파일마다라 srv_req_fd 의 읽기에는 영향이 없다) */
     srv_wake_fd = open(rp, O_WRONLY | O_NONBLOCK);
@@ -330,7 +368,7 @@ static int open_resp(uint32_t id)
         if (errno == ENXIO || errno == ENOENT) errno = EPIPE;
         return -1;
     }
-    if (clear_nonblock(fd) < 0) {
+    if (clear_nonblock(fd) < 0 || apply_pipe_sz(fd) < 0) {
         int e = errno;
         close(fd);
         errno = e;

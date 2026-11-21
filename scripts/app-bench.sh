@@ -65,7 +65,10 @@ cpu_snapshot() {
     echo "msgmax: $(cat /proc/sys/kernel/msgmax)"
     echo "msgmnb: $(cat /proc/sys/kernel/msgmnb)"
     echo "PIPE_BUF: $(getconf PIPE_BUF /)"
+    echo "pipe-max-size: $(cat /proc/sys/fs/pipe-max-size)"
     echo "ulimit -n: $(ulimit -n)"
+    echo; echo "## 전송 계층 환경 변수 (OSP_*, 설계 개선 실험)"
+    osp=$(env | grep '^OSP_' | sort); echo "${osp:-(없음)}"
     echo; echo "## 측정 시작 때 CPU 를 쓰는 프로세스"; cpu_snapshot
 } > "$OUT/app_env.txt"
 

@@ -296,22 +296,27 @@ else
         elif [ "$got" != "$want" ]; then ok T-13 "$i: 관찰 - 락 없이 체크섬이 어긋남 (${got#checksum } / 정답 ${want#checksum })"
         else ok T-13 "$i: 관찰 - 이번 실행에서는 어긋나지 않음 (FAIL 아님)"; fi
 
-        # T-15 그린 뒤 apptest 4개가 동시 8개씩 큰 SNAPSHOT 을 받아 정답 캔버스와 비교
-        srv_start "$i" -l tile -w 8
-        run_clients "$i" 4 500 -w 10; cf=$?
-        pids=""
-        for a in 10 11 12 13; do
-            tmo 60 "bin/apptest_$i" snap "$a" 24 8 4 500 >"$W/a$a.out" 2>&1 &
-            pids="$pids $!"
+        # T-15 그린 뒤 apptest 4개가 동시 8개씩 큰 SNAPSHOT 을 받아 정답 캔버스와 비교.
+        # pipe 는 FIFO 버퍼를 1MB 로 키운 서버(OSP_PIPE_SZ, 설계 개선 실험)로도 한 번 더 본다
+        szs="-"; [ "$i" = pipe ] && szs="- 1048576"
+        for sz in $szs; do
+            if [ "$sz" = - ]; then srv_start "$i" -l tile -w 8; tag=""
+            else OSP_PIPE_SZ=$sz srv_start "$i" -l tile -w 8; tag=" OSP_PIPE_SZ=$sz"; fi
+            run_clients "$i" 4 500 -w 10; cf=$?
+            pids=""
+            for a in 10 11 12 13; do
+                tmo 60 "bin/apptest_$i" snap "$a" 24 8 4 500 >"$W/a$a.out" 2>&1 &
+                pids="$pids $!"
+            done
+            abad=0
+            for p in $pids; do wait "$p" || abad=$((abad + 1)); done
+            srv_stop; rc=$?
+            if [ "$cf" = 0 ] && [ "$abad" = 0 ] && [ "$rc" = 0 ] && [ "$(srv_sum)" = "$(bin/verify -c 4 -n 500 2>/dev/null)" ]; then
+                ok T-15 "$i$tag: apptest 4개 × $(sed 's/^ok *//' "$W/a10.out")"
+            else
+                ng T-15 "$i$tag: 그리기 실패 $cf, apptest 실패 $abad, 서버 $rc"; cat "$W"/a1?.out
+            fi
         done
-        abad=0
-        for p in $pids; do wait "$p" || abad=$((abad + 1)); done
-        srv_stop; rc=$?
-        if [ "$cf" = 0 ] && [ "$abad" = 0 ] && [ "$rc" = 0 ] && [ "$(srv_sum)" = "$(bin/verify -c 4 -n 500 2>/dev/null)" ]; then
-            ok T-15 "$i: apptest 4개 × $(sed 's/^ok *//' "$W/a10.out")"
-        else
-            ng T-15 "$i: 그리기 실패 $cf, apptest 실패 $abad, 서버 $rc"; cat "$W"/a1?.out
-        fi
 
         # T-21 클라이언트 8개가 처리받는 도중 서버 SIGINT: 서버와 클라이언트가 끝나고 자원이 남지 않는다
         srv_start "$i" -l tile -w 8
