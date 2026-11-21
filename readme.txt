@@ -22,8 +22,18 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
      ./bin/verify -c 4                                위 4개 클라이언트의 정답 체크섬
    서버는 Ctrl+C(SIGINT) 또는 kill -TERM 으로 끝낸다. 받은 요청을 다 처리한 뒤 canvas_shm.pgm 을 저장하고
    "checksum <16진수>" 를 출력한다. 이 값이 verify 의 출력과 같아야 한다.
-   주요 옵션: 서버 -w 워커수 -l global|tile|tile-rw -t 타일한변 -p PGM경로, 클라이언트 -n 요청수 -m DRAW비율 -f 동시요청수
-   (자세한 옵션은 README.md 의 사용 방법)
+   서버 옵션 (괄호는 기본값)
+     -w N   워커 수 1~64 (4)
+     -l S   락 방식 global, tile, tile-rw, none (global). none 은 경쟁 상태 시연용이다
+     -t N   타일 한 변, 16~1024 의 2의 거듭제곱 (64). tile, tile-rw 에서만 쓴다
+     -d     작업 큐와 워커 없이 수신 스레드가 직접 처리한다 (큐 비용 확인용)
+     -p F   끝날 때 저장할 PGM 경로 (canvas_<ipc>.pgm)
+     -O F   끝날 때 서버 자원 사용량을 CSV F 에 한 줄 덧붙인다. -e 실험, -R 반복, -C 커밋은 그 줄의 칸 (측정 스크립트용)
+   서버 환경 변수 (실험용, 주지 않으면 기본값)
+     pipe: OSP_PIPE_SZ (FIFO 버퍼 바이트, 기본은 커널 기본값 64KB)
+     shm:  OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS (링의 칸 크기와 요청 링·응답 링의 칸 수)
+   클라이언트 주요 옵션: -i 번호 -n 요청수 -m DRAW비율 -f 동시요청수
+   클라이언트, 검증기, 벤치마크(bench_*)의 모든 옵션과 기본값은 -h 로 본다. 예: ./bin/client_shm -h
 
 4. 측정 재현
    1단계 (IPC 기초 성능, 측정용 컴퓨터에서 다른 무거운 프로그램을 끄고 실행)
