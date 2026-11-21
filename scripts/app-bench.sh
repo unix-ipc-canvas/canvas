@@ -20,6 +20,7 @@ IPCS=${IPCS:-"pipe mq shm"}
 EXPS=${EXPS:-"base type draw clients workers lock tile"}
 WORKERS=${WORKERS:-"1 2 4 8"}       # workers 실험의 워커 수 (원인 확인 실험에서 바꾼다)
 OUT=${OUT:-results}
+RUN0=${RUN0:-0}                     # CSV 의 반복 번호(run)를 이만큼 밀어 적는다. 반복을 나눠 부를 때 (exp-stage2.sh pipesz)
 
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 if ! git diff --quiet HEAD -- src include Makefile scripts 2>/dev/null; then
@@ -51,7 +52,7 @@ cpu_snapshot() {
     echo "# scripts/app-bench.sh 가 측정을 시작할 때 기록한 환경"
     echo "date: $(date -Iseconds)"
     echo "commit: $commit"
-    echo "reps: $REPS, ipcs: $IPCS, experiments: $EXPS, workers: $WORKERS"
+    echo "reps: $REPS (run 번호 $((RUN0 + 1))부터), ipcs: $IPCS, experiments: $EXPS, workers: $WORKERS"
     echo
     echo "## lscpu"; lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz'
     echo; echo "## free -h"; free -h | head -2
@@ -65,9 +66,15 @@ cpu_snapshot() {
     echo "msgmax: $(cat /proc/sys/kernel/msgmax)"
     echo "msgmnb: $(cat /proc/sys/kernel/msgmnb)"
     echo "PIPE_BUF: $(getconf PIPE_BUF /)"
+    echo "pipe-max-size: $(cat /proc/sys/fs/pipe-max-size)"
     echo "ulimit -n: $(ulimit -n)"
+    echo; echo "## 전송 계층 환경 변수 (OSP_*, 설계 개선 실험)"
+    osp=$(env | grep '^OSP_' | sort); echo "${osp:-(없음)}"
     echo; echo "## 측정 시작 때 CPU 를 쓰는 프로세스"; cpu_snapshot
-} > "$OUT/app_env.txt"
+} > "$OUT/app_env.new"
+# 반복을 나눠 부르면(RUN0 > 0) 앞 기록 뒤에 덧붙인다
+if [ "$RUN0" -gt 0 ]; then cat "$OUT/app_env.new" >> "$OUT/app_env.txt"; rm -f "$OUT/app_env.new"
+else mv "$OUT/app_env.new" "$OUT/app_env.txt"; fi
 
 # SNAPSHOT 만 보내는 실행은 응답이 커서 요청 수와 워밍업을 줄인다 (1단계와 같은 표)
 count_for() { if [ "$1" != 0 ] || [ "$2" -le 128 ]; then echo 20000; elif [ "$2" -le 256 ]; then echo 10000; elif [ "$2" -le 512 ]; then echo 4000; else echo 2000; fi; }
@@ -142,10 +149,10 @@ for rep in $(seq "$REPS"); do
     for exp in $EXPS; do
         while read -r c f w l t m s; do
             for ipc in "${order[@]}"; do
-                if ! run_once "$ipc" "$exp" "$rep" "$c" "$f" "$w" "$l" "$t" "$m" "$s"; then
-                    echo "실패: $ipc $exp rep=$rep c=$c f=$f w=$w l=$l t=$t m=$m S=$s. 자원을 치우고 한 번 더 한다" >&2
+                if ! run_once "$ipc" "$exp" "$((RUN0 + rep))" "$c" "$f" "$w" "$l" "$t" "$m" "$s"; then
+                    echo "실패: $ipc $exp rep=$((RUN0 + rep)) c=$c f=$f w=$w l=$l t=$t m=$m S=$s. 자원을 치우고 한 번 더 한다" >&2
                     make -s ipcclean >/dev/null
-                    if ! run_once "$ipc" "$exp" "$rep" "$c" "$f" "$w" "$l" "$t" "$m" "$s"; then
+                    if ! run_once "$ipc" "$exp" "$((RUN0 + rep))" "$c" "$f" "$w" "$l" "$t" "$m" "$s"; then
                         echo "다시 실패: 건너뛴다" >&2; failed=$((failed + 1)); make -s ipcclean >/dev/null
                     fi
                 fi
