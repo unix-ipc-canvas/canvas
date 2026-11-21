@@ -13,9 +13,13 @@
 #   pcore-mix  같은 실험을 P코어에 묶어서                                  -> results/exp-app-pcore-mix/
 #   pipesz     설계 개선(T6). pipe 의 요청 종류별·기준 실험을 FIFO 버퍼 기본(64KB)과 1MB(OSP_PIPE_SZ)로,
 #              묶지 않은 것과 P코어에 묶은 것 각각 번갈아            -> results/exp-app-pipesz/<버퍼>-<배치>-<번>/
+#   shmmem     메모리 절감(N-5, T6). shm 의 클라이언트 수·요청 종류별 실험을 링 기본(요청 4개·응답 2개 분량),
+#              요청 링만 최소(가장 큰 메시지 1개, 257칸), 둘 다 최소로, 묶지 않은 것과 P코어에 묶은 것 각각 번갈아
+#                                                                          -> results/exp-app-shmmem/<링>-<배치>-<번>/
 # 반복은 5번(placement 는 2번). 표본을 모으는 placement 는 표본 수집이 CPU 를 써서 처리량을 비교에 쓰지 않는다.
-# pipesz 는 서버 비교(results/exp-app-servercmp/)와 같은 방식이다: 두 조건을 REPS=2 씩 다른 폴더로 5번 번갈아 불러
-# 조건마다 10번. 약 15~20분. 기본 실행 목록에는 넣지 않는다: EXPS=pipesz scripts/exp-stage2.sh
+# pipesz, shmmem 은 서버 비교(results/exp-app-servercmp/)와 같은 방식이다: 조건들을 REPS=2 씩 다른 폴더로 번갈아 부른다.
+# pipesz 는 5번 번갈아 조건마다 10번(약 15~20분), shmmem 은 조건이 3개라 3번 번갈아 조건마다 6번(약 25분).
+# 기본 실행 목록에는 넣지 않는다: EXPS="pipesz shmmem" scripts/exp-stage2.sh
 set -u
 cd "$(dirname "$0")/.."
 EXPS=${EXPS:-"wsteps ecore pcore placement ecore-mix pcore-mix"}
@@ -43,6 +47,20 @@ for e in $EXPS; do
                         $pin scripts/app-bench.sh || rc=1
                     OSP_PIPE_SZ=1048576 REPS=2 IPCS=pipe EXPS="type base" OUT=results/exp-app-pipesz/1m-$p-$k \
                         $pin scripts/app-bench.sh || rc=1
+                done
+            done ;;
+        shmmem)
+            # 257 = 칸 4096B 로 가장 큰 메시지(머리 24B + MAX_PAYLOAD)를 담는 칸 수. transport_shm.c 가 허용하는 가장 작은 링
+            # 요청은 16B 를 넘지 않아 요청 링이 큰 메시지 4개 분량일 까닭이 없다. 응답 링까지 줄이면 1MB 응답을 겹쳐 보내지 못한다
+            for k in 1 2 3; do
+                for p in free pcore; do
+                    pin=""; [ "$p" = pcore ] && pin="taskset -c 0-3"
+                    env -u OSP_SHM_CHUNK -u OSP_SHM_REQ_CHUNKS -u OSP_SHM_RESP_CHUNKS REPS=2 IPCS=shm EXPS="clients type" \
+                        OUT=results/exp-app-shmmem/def-$p-$k $pin scripts/app-bench.sh || rc=1
+                    env -u OSP_SHM_CHUNK -u OSP_SHM_RESP_CHUNKS OSP_SHM_REQ_CHUNKS=257 REPS=2 IPCS=shm EXPS="clients type" \
+                        OUT=results/exp-app-shmmem/req-$p-$k $pin scripts/app-bench.sh || rc=1
+                    env -u OSP_SHM_CHUNK OSP_SHM_REQ_CHUNKS=257 OSP_SHM_RESP_CHUNKS=257 REPS=2 IPCS=shm EXPS="clients type" \
+                        OUT=results/exp-app-shmmem/min-$p-$k $pin scripts/app-bench.sh || rc=1
                 done
             done ;;
         *) echo "모르는 실험: $e" >&2; rc=1 ;;
