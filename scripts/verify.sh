@@ -170,7 +170,7 @@ run_clients() {
 
 srv_sum() { grep '^checksum' "$W/srv.out"; }
 
-RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-21 T-22 T-30 T-31"
+RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-30 T-31"
 app_have=""
 for i in pipe mq shm; do
     [ -x "bin/server_$i" ] && [ -x "bin/client_$i" ] && [ -x "bin/apptest_$i" ] && app_have="$app_have $i"
@@ -344,6 +344,15 @@ else
         else
             ng T-21 "$i: 서버 $rc, 끝나지 않은 클라이언트 $cto, 남은 자원 [$lo]"
             make -s ipcclean >/dev/null 2>&1
+        fi
+
+        # T-19 사람이 그리는 클라이언트: 명령 줄 둘이 동시에 그린 결과 = 정답, 화면(pty)에서 마우스로 그리기
+        if [ -x "bin/draw_$i" ] && command -v python3 >/dev/null; then
+            tmo 120 python3 scripts/test-draw.py "$i" "$W" >"$log" 2>&1; rd=$?
+            if [ "$rd" -eq 0 ]; then ok T-19 "$(tail -1 "$log" | sed 's/^ok *//')"
+            else ng T-19 "$(tail -1 "$log" | sed 's/^ng *//')"; make -s ipcclean >/dev/null 2>&1; fi
+        else
+            sk T-19 "$i: bin/draw_$i 또는 python3 없음"
         fi
     done
 

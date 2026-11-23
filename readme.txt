@@ -33,6 +33,8 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
      pipe: OSP_PIPE_SZ (FIFO 버퍼 바이트, 기본은 커널 기본값 64KB)
      shm:  OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS (링의 칸 크기와 요청 링·응답 링의 칸 수)
    클라이언트 주요 옵션: -i 번호 -n 요청수 -m DRAW비율 -f 동시요청수
+   사람이 직접 그리기: 서버를 띄운 뒤 터미널마다 ./bin/draw_shm (pipe, mq 도 같음). 여러 명이 동시에 그린다.
+     마우스 왼쪽 끌기=그리기, 1~9=색, b/r=붓/사각형, [ ]=붓 크기, 휠·+/-/0=확대, 방향키=이동, q=끝
    클라이언트, 검증기, 벤치마크(bench_*)의 모든 옵션과 기본값은 -h 로 본다. 예: ./bin/client_shm -h
 
 4. 측정 재현
