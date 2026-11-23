@@ -1,0 +1,18 @@
+// 보고서 4.1절 설계도. dot -Tpng -Gdpi=150 architecture.dot -o architecture.png
+digraph G {
+  rankdir=LR; fontname="Noto Sans CJK KR"; nodesep=0.35; ranksep=0.6;
+  node [fontname="Noto Sans CJK KR", fontsize=11, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#5b6b7a"];
+  edge [fontname="Noto Sans CJK KR", fontsize=9, color="#5b6b7a"];
+  subgraph cluster_c { label="클라이언트 프로세스 × N (1~16)"; style="rounded,filled"; fillcolor="#eef6f2"; color="#2f8f6b";
+    cm [label="main\nHELLO, 측정 시작"]; cs [label="송신 스레드\nsend_main"]; tbl [label="요청 시각 표\n슬롯 + 세마포어 + mutex", shape=cylinder, fillcolor="#fff7e0"];
+    cr [label="수신 스레드\nrecv_main"]; ct [label="통계 스레드\nstats_main → CSV"]; csg [label="신호 스레드\nsignal_main (sigwait)"];
+    cs -> tbl [dir=both, style=dashed]; cr -> tbl [dir=both, style=dashed]; cr -> ct [style=dashed, label="끝난 뒤 1회"]; }
+  req [label="요청 채널 (공용 1개, N:1)\npipe: FIFO /tmp/osproject_2_req\nmq: key 60020 큐\nshm: key 60022 링 + 세마포어", fillcolor="#dbeafe", color="#2563eb"];
+  resp [label="응답 채널 (클라이언트마다)\npipe: FIFO resp_<id>\nmq: key 60021 큐, mtype=id+1\nshm: key 60023 링 + 세마포어", fillcolor="#dbeafe", color="#2563eb"];
+  subgraph cluster_s { label="서버 프로세스"; style="rounded,filled"; fillcolor="#f2f0fa"; color="#6b5bb8";
+    sr [label="수신 스레드\nrecv_main"]; q [label="작업 큐 (256)\nmutex + 조건변수 2", shape=cylinder, fillcolor="#fff7e0"];
+    w [label="워커 스레드 × N (-w)\nworker_main"]; cv [label="캔버스 1MB\n타일 락 (-l, -t)", shape=cylinder, fillcolor="#fff7e0"];
+    ad [label="관리 스레드\nadmin_main (sigwait)"]; sm [label="main\n종료: PGM, 체크섬, 정리"];
+    sr -> q -> w; w -> cv [dir=both]; }
+  cs -> req -> sr; w -> resp [label="송신 mutex\n(클라이언트별)"]; resp -> cr;
+}

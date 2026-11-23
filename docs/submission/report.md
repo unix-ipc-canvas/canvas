@@ -41,6 +41,14 @@
 | 8.2 | AI 활용, AI가 틀린 사례 2개 이상, AI 코드 결함 | [AI 활용 기록](../records/ai-log.md) | |
 | 9 | 부록 | 소스 전체, Makefile, readme.txt, 스크립트, 원자료, AI 대화 기록(`docs/records/ai-chats/`) | |
 
+## 최종보고서 초안
+
+[final-report.docx](final-report.docx)는 서식의 목차대로 1~9장을 모두 채운 초안이다(11/23, 37쪽). 수치는 위 표의 출처 문서와 `results/` 원자료에서만 옮겼다. 제출 전에 채울 것은 노란 칸이다.
+
+- 표지: 팀명, 김병수·오현근의 학번, 팀장 표시, 제출 날짜
+- 7장: 작업 시간 합계(`docs/records/worklog.csv` 집계)
+- 8.1절 결론은 셋이 함께 검토한다
+
 ## 캡처 목록
 
 제출 직전에 한꺼번에 찍으면 빠뜨린다. 해당 단계에서 바로 찍는다. 캡처는 `docs/assets/captures/`에 둔다.
