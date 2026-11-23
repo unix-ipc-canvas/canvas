@@ -87,6 +87,14 @@ else
             else
                 ng T-04 "전송 계층 시험 $i"; grep -v '^PASS' "$log"
             fi
+            # shm 은 설계 개선 실험의 클라이언트별 요청 링(OSP_SHM_REQ_RING=per)으로도 같은 시험을 한다
+            if [ "$i" = shm ]; then
+                if OSP_SHM_REQ_RING=per tmo 300 scripts/test-transport.sh "$i" >"$log" 2>&1; then
+                    ok T-04 "전송 계층 시험 $i OSP_SHM_REQ_RING=per ($(grep -c '^PASS' "$log")개 항목)"
+                else
+                    ng T-04 "전송 계층 시험 $i OSP_SHM_REQ_RING=per"; grep -v '^PASS' "$log"
+                fi
+            fi
         done
     fi
     b_have=$(ls bin/bench_* 2>/dev/null)
@@ -101,6 +109,13 @@ else
             done
             if [ -z "$bad" ]; then ok T-05 "$(basename "$b") -V 내용 검사"; else ng T-05 "$(basename "$b") -V:$bad"; fi
         done
+        if [ -x bin/bench_shm ]; then       # 클라이언트별 요청 링으로도 한 번
+            bad=""
+            for args in "-c 8 -s 4097 -n 800 -f 16" "-c 4 -s $maxp -n 40 -f 4"; do
+                OSP_SHM_REQ_RING=per tmo 120 bin/bench_shm $args -w 4 -V >"$log" 2>&1 || bad="$bad [$args] $(tail -1 "$log")"
+            done
+            if [ -z "$bad" ]; then ok T-05 "bench_shm OSP_SHM_REQ_RING=per -V 내용 검사"; else ng T-05 "bench_shm OSP_SHM_REQ_RING=per -V:$bad"; fi
+        fi
     fi
 fi
 
@@ -298,10 +313,11 @@ else
 
         # T-15 그린 뒤 apptest 4개가 동시 8개씩 큰 SNAPSHOT 을 받아 정답 캔버스와 비교.
         # 설계 개선 실험의 서버 환경으로도 한 번 더 본다: pipe 는 FIFO 버퍼 1MB(OSP_PIPE_SZ),
-        # shm 은 요청·응답 링을 가장 큰 메시지 1개(칸 4096B 로 257칸)로 줄인 것(OSP_SHM_*_CHUNKS). 쉼표로 여러 변수
+        # shm 은 요청·응답 링을 가장 큰 메시지 1개(칸 4096B 로 257칸)로 줄인 것(OSP_SHM_*_CHUNKS)과
+        # 클라이언트별 요청 링(OSP_SHM_REQ_RING=per). 쉼표로 여러 변수
         envs="-"
         [ "$i" = pipe ] && envs="- OSP_PIPE_SZ=1048576"
-        [ "$i" = shm ] && envs="- OSP_SHM_REQ_CHUNKS=257,OSP_SHM_RESP_CHUNKS=257"
+        [ "$i" = shm ] && envs="- OSP_SHM_REQ_CHUNKS=257,OSP_SHM_RESP_CHUNKS=257 OSP_SHM_REQ_RING=per"
         for ev in $envs; do
             tag=""
             if [ "$ev" != - ]; then

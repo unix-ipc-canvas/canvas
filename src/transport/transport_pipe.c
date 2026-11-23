@@ -17,6 +17,11 @@
  *   환경 변수 OSP_PIPE_SZ(바이트)를 주면 서버가 요청 FIFO 와 응답 FIFO 의 버퍼를 그 크기로 바꾼다(F_SETPIPE_SZ).
  *   주지 않으면 커널 기본값(64KB)이다. 버퍼가 차면 쓰는 쪽이 잠들고 읽는 쪽이 비우면 깨어나므로,
  *   버퍼보다 큰 응답은 버퍼 하나를 넘길 때마다 양쪽이 한 번씩 잠든다(1단계 측정).
+ *
+ * 송신 잠금 기록 (원인 확인 실험, docs/measurement/stage1.md 의 pipe 의 긴 꼬리)
+ *   클라이언트 환경 변수 OSP_PIPE_LOCKLOG=<접두어> 를 주면 PIPE_BUF 를 넘는 요청마다 잠금을 기다리기 시작한 시각,
+ *   같은 프로세스의 mutex 를 얻은 시각, fcntl 잠금을 얻은 시각(CLOCK_MONOTONIC ns)을 메모리에 모아 두었다가
+ *   tp_client_close 에서 <접두어>.<id>.<pid> 파일에 한 줄씩 쓴다. 주지 않으면 시각을 재지 않는다.
  */
 #define _GNU_SOURCE             /* F_SETPIPE_SZ */
 #include <errno.h>
@@ -30,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -158,9 +164,52 @@ static void ignore_sigpipe(void)
 /* PIPE_BUF 를 넘는 요청에 거는 송신 잠금. 프로세스 사이는 fcntl, 같은 프로세스의 스레드 사이는 mutex */
 static pthread_mutex_t big_mtx = PTHREAD_MUTEX_INITIALIZER;
 
+/* 송신 잠금 기록. lw_rec 은 big_mtx 를 쥐고 쓴다 */
+typedef struct { uint64_t start, mtx, got; } lockwait_t;
+static lockwait_t *lw_rec;
+static size_t lw_n, lw_cap;
+static const char *lw_prefix;
+
+static uint64_t mono_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static void lockwait_open(void)
+{
+    const char *p = getenv("OSP_PIPE_LOCKLOG");
+    if (!p || !*p) return;
+    lw_cap = 1u << 20;
+    lw_rec = malloc(sizeof *lw_rec * lw_cap);
+    lw_n = 0;
+    lw_prefix = lw_rec ? p : NULL;
+}
+
+static void lockwait_close(uint32_t id)
+{
+    if (!lw_rec) return;
+    char path[512];
+    snprintf(path, sizeof path, "%s.%u.%ld", lw_prefix, id, (long)getpid());
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "# id %u pid %ld: start_ns mtx_ns got_ns (CLOCK_MONOTONIC)\n", id, (long)getpid());
+        for (size_t i = 0; i < lw_n; i++)
+            fprintf(f, "%llu %llu %llu\n", (unsigned long long)lw_rec[i].start,
+                    (unsigned long long)lw_rec[i].mtx, (unsigned long long)lw_rec[i].got);
+        fclose(f);
+    }
+    free(lw_rec);
+    lw_rec = NULL;
+    lw_n = lw_cap = 0;
+}
+
 static int big_lock(int lock_fd)
 {
+    uint64_t t0 = lw_rec ? mono_ns() : 0;
     pthread_mutex_lock(&big_mtx);
+    uint64_t t1 = lw_rec ? mono_ns() : 0;
     struct flock fl = { .l_type = F_WRLCK, .l_whence = SEEK_SET, .l_start = 0, .l_len = 0 };
     while (fcntl(lock_fd, F_SETLKW, &fl) < 0) {
         if (errno == EINTR) continue;
@@ -169,6 +218,7 @@ static int big_lock(int lock_fd)
         errno = e;
         return -1;
     }
+    if (lw_rec && lw_n < lw_cap) lw_rec[lw_n++] = (lockwait_t){ t0, t1, mono_ns() };
     return 0;
 }
 
@@ -528,6 +578,7 @@ int tp_client_open(uint32_t client_id)
     atomic_store(&cli_keeper_fd, keeper);
     cli_id = client_id;
     cli_opened = 1;
+    lockwait_open();
     return 0;
 
 fail:;
@@ -601,4 +652,5 @@ void tp_client_close(void)
     close(cli_req_fd);  cli_req_fd = -1;
     close(cli_lock_fd); cli_lock_fd = -1;
     cli_opened = 0;
+    lockwait_close(cli_id);
 }
