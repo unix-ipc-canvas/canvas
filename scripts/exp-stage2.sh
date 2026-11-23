@@ -22,6 +22,11 @@
 #   shmring    설계 개선(T7). shm 요청 링을 하나로 함께 쓰는 것(기본)과 클라이언트별 링(OSP_SHM_REQ_RING=per)을
 #              클라이언트 수·DRAW 비율 실험으로, 묶지 않은 것과 P코어에 묶은 것 각각 번갈아 (3번, 조건마다 6번, 약 25분)
 #                                                                          -> results/exp-app-shmring/<링>-<배치>-<번>/
+#   ipcrank    shmring 뒤 IPC 순위 다시 보기. 기준·클라이언트 수 실험을 pipe·mq·shm(공유 링)과 shm(클라이언트별 링)으로
+#              같은 세션에서 번갈아, 묶지 않은 것과 P코어에 묶은 것 (3번, 조건마다 6번, 약 20분)
+#                                     -> results/exp-app-ipcrank/<all|per>-<배치>-<번>/ (all 은 세 IPC, per 는 shm)
+#   pipeszb    pipesz2 의 echo 벤치를 다른 세션에서 같은 명령으로 다시 (재현 확인, 약 5분)
+#                                                                    -> results/exp-pipesz-bench2/bench_pipe.csv
 #   pipelock   원인 확인(T8). pipe 의 긴 꼬리가 송신 잠금(fcntl)의 불공정 때문인지. bench_pipe 를 송신 잠금 기록
 #              (OSP_PIPE_LOCKLOG)과 함께 클라이언트 1·2·4·8, 크기 4KB·64KB·1MB, -f 16, 워밍업 없이(-w 0, 모든 잠금이
 #              측정 구간 안) 5번 (약 5분)
@@ -32,7 +37,7 @@
 # 반복은 5번(placement 는 2번). 표본을 모으는 placement 는 표본 수집이 CPU 를 써서 처리량을 비교에 쓰지 않는다.
 # pipesz, shmmem 은 서버 비교(results/exp-app-servercmp/)와 같은 방식이다: 조건들을 REPS=2 씩 다른 폴더로 번갈아 부른다.
 # pipesz 는 5번 번갈아 조건마다 10번(약 15~20분), shmmem 은 조건이 3개라 3번 번갈아 조건마다 6번(약 25분).
-# 기본 실행 목록에는 넣지 않는다: EXPS="pipesz shmmem pipesz2 shmring pipelock pipecpu" scripts/exp-stage2.sh
+# 기본 실행 목록에는 넣지 않는다: EXPS="pipesz shmmem pipesz2 shmring pipelock pipecpu ipcrank pipeszb" scripts/exp-stage2.sh
 set -u
 cd "$(dirname "$0")/.."
 EXPS=${EXPS:-"wsteps ecore pcore placement ecore-mix pcore-mix"}
@@ -111,6 +116,32 @@ for e in $EXPS; do
                         EXPS="clients draw" OUT=results/exp-app-shmring/per-$p-$k $pin scripts/app-bench.sh || rc=1
                 done
             done ;;
+        ipcrank)
+            for k in 1 2 3; do
+                for p in free pcore; do
+                    pin=""; [ "$p" = pcore ] && pin="taskset -c 0-3"
+                    env -u OSP_SHM_REQ_RING -u OSP_SHM_CHUNK -u OSP_SHM_REQ_CHUNKS -u OSP_SHM_RESP_CHUNKS -u OSP_PIPE_SZ REPS=2 \
+                        EXPS="base clients" OUT=results/exp-app-ipcrank/all-$p-$k $pin scripts/app-bench.sh || rc=1
+                    env -u OSP_SHM_CHUNK -u OSP_SHM_REQ_CHUNKS -u OSP_SHM_RESP_CHUNKS -u OSP_PIPE_SZ OSP_SHM_REQ_RING=per REPS=2 IPCS=shm \
+                        EXPS="base clients" OUT=results/exp-app-ipcrank/per-$p-$k $pin scripts/app-bench.sh || rc=1
+                done
+            done ;;
+        pipeszb)
+            make -s >/dev/null || { rc=1; continue; }
+            B=results/exp-pipesz-bench2; mkdir -p $B; c=$(git rev-parse --short HEAD)
+            for k in 1 2 3 4 5; do
+                for p in free pcore; do
+                    pin=""; [ "$p" = pcore ] && pin="taskset -c 0-3"
+                    for sz in 65536 262144 1048576; do
+                        if [ $sz = 65536 ]; then pre="env -u OSP_PIPE_SZ"; else pre="env OSP_PIPE_SZ=$sz"; fi
+                        for s in 262144 1048576; do
+                            for fl in 1 16; do
+                                $pre $pin ./bin/bench_pipe -c 1 -s $s -n 2000 -f $fl -e buf$sz-$p -r $k -o $B/bench_pipe.csv -C $c || rc=1
+                            done
+                        done
+                    done
+                done
+            done ;;
         pipelock)
             make -s >/dev/null || { rc=1; continue; }
             B=results/exp-pipe-lockwait; mkdir -p $B; c=$(git rev-parse --short HEAD)
@@ -123,7 +154,7 @@ for e in $EXPS; do
                     done
                 done
             done
-            python3 scripts/pipe-experiments.py lock $B $B/summary.md >/dev/null || rc=1 ;;
+            python3 scripts/pipe-experiments.py lock $B docs/assets/bench/exp-pipelock.md >/dev/null || rc=1 ;;
         pipecpu)
             make -s >/dev/null || { rc=1; continue; }
             B=results/exp-pipecpu; mkdir -p $B; c=$(git rev-parse --short HEAD)
@@ -140,7 +171,7 @@ for e in $EXPS; do
                     done
                 done
             done
-            python3 scripts/pipe-experiments.py cpu $B/bench_pipe.csv $B/summary.md >/dev/null || rc=1 ;;
+            python3 scripts/pipe-experiments.py cpu $B/bench_pipe.csv docs/assets/bench/exp-pipecpu.md >/dev/null || rc=1 ;;
         *) echo "모르는 실험: $e" >&2; rc=1 ;;
     esac
 done
