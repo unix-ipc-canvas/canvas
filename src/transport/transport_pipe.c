@@ -433,7 +433,9 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
     if (id >= MAX_CLIENTS) { errno = EINVAL; return -1; }
 
     int rc = -1;
+#ifndef DEMO_NO_RESP_MUTEX              /* 동기화 시연용 빌드(scripts/race-demo.sh)에서만 뺀다 */
     pthread_mutex_lock(&srv_resp_mtx[id]);
+#endif
 
     /*
      * 예전 클라이언트가 나간 뒤 같은 번호의 새 클라이언트가 FIFO 를 다시 만든 경우,
@@ -459,7 +461,9 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
         if (!(e == EPIPE && done == 0)) break;
     }
 
+#ifndef DEMO_NO_RESP_MUTEX
     pthread_mutex_unlock(&srv_resp_mtx[id]);
+#endif
     return rc;
 }
 
