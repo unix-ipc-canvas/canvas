@@ -291,6 +291,7 @@ make clean && make EXTRA_CFLAGS='-fsanitize=thread' && scripts/test-transport.sh
 | --- | --- |
 | [최종보고서·제출 준비 기준](docs/submission/report.md) | 제출물 점검, 보고서 절별 출처, 캡처 목록 |
 | [최종 발표 준비 기준](docs/submission/presentation.md) | 발표·제출 조건, 발표자료 구성, 데모 시나리오 |
+| [발표 질의응답 준비](docs/submission/qa.md) | C 담당(shm 전송 계층, 측정)이 직접 설명할 질문과 답, 연습 명령 |
 
 ### 기록
 
