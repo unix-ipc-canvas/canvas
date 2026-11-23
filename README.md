@@ -250,7 +250,8 @@ make clean && make EXTRA_CFLAGS='-fsanitize=thread' && scripts/test-transport.sh
 | [설계 명세](docs/design/README.md) | 채널, 스레드, 공유 자원과 동기화, 실행 옵션 |
 | [측정 방법](docs/measurement/README.md) | 타임스탬프 위치, 통계, 자원 사용량, 원자료 형식 |
 | [1단계 측정 결과](docs/measurement/stage1.md) | 1단계 측정 기록, 결과, 해석과 확인할 가설 |
-| [2단계 측정 결과](docs/measurement/stage2.md) | 2단계 측정 기록, 결과, 원인 확인 실험, 예측과 비교 |
+| [2단계 측정 결과](docs/measurement/stage2.md) | 2단계 측정 기록, 결과, 원인 확인 실험, 설계 개선 실험, 예측과 비교 |
+| [IPC 선택 가이드라인](docs/measurement/guideline.md) | 측정 결과로 정리한 상황별 IPC 선택 (보고서 6.6절) |
 | [테스트 명세](docs/verification/README.md) | 검증 항목과 판정 기준 |
 
 ### 협업
