@@ -33,6 +33,14 @@
  *   담아 주는 약속이라 복사를 없앨 수는 없다. 그 대신 메시지 전체가 링에 들어가므로 큰 메시지도 조각내지 않는다.
  * DECISION: 링 크기는 가장 큰 메시지(머리 + MAX_PAYLOAD)를 요청 링에 4개, 응답 링에 2개 담을 수 있게 잡는다.
  *   환경 변수 OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS 로 서버를 띄울 때 바꿀 수 있다 (메모리 실험용).
+ *
+ * 클라이언트별 요청 링 (실험용, 서버 환경 변수 OSP_SHM_REQ_RING=per. 기본은 shared = 위의 링 하나)
+ *   요청 링을 클라이언트마다 하나씩 MAX_CLIENTS 개 둔다. 링마다 MUTEX, FREE 는 그대로이고 MSGS 는 쓰지 않는다.
+ *   대신 집합 끝에 모든 요청 링의 메시지 수 TOTAL 세마포어 하나를 둔다. 보내는 쪽은 자기 링에 쓰고 TOTAL 에 +1,
+ *   서버 수신 스레드는 TOTAL 에서 -1 한 뒤 링들을 돌아가며(round-robin) 보고 head != tail 인 링에서 하나 꺼낸다.
+ *   보내는 쪽은 head 를 먼저 바꾸고 TOTAL 을 올리므로, TOTAL 을 하나 얻었으면 head 가 앞선 링이 적어도 하나 있다.
+ *   클라이언트들이 MUTEX 하나를 두고 다투지 않는 대신, 링이 클라이언트 수만큼 늘어 메모리가 커진다.
+ *   기본 칸 수는 가장 큰 메시지 하나(머리 + MAX_PAYLOAD)이다. 서버가 요청 영역 머리에 방식을 적고 클라이언트가 따른다.
  */
 #define _GNU_SOURCE             /* semtimedop, F_OFD_SETLK, F_OFD_GETLK */
 #include <errno.h>
@@ -80,8 +88,11 @@ typedef struct {
     uint32_t chunk;
     uint32_t req_chunks;
     uint32_t resp_chunks;
-    uint32_t pad[12];
+    uint32_t req_mode;      /* REQ_SHARED 또는 REQ_PER_CLIENT */
+    uint32_t pad[11];
 } seg_hdr_t;
+
+enum { REQ_SHARED = 0, REQ_PER_CLIENT = 1 };
 
 /* 링 머리. 공유 메모리 안에 있다. 64B */
 typedef struct {
@@ -96,6 +107,7 @@ typedef struct {
     char          *data;
     int            semid;
     unsigned short base;    /* 집합 안에서 이 링의 첫 세마포어 번호 */
+    unsigned short msgs;    /* 보낸 뒤 +1 할 세마포어. 보통은 base + S_MSGS, 클라이언트별 요청 링은 TOTAL */
     uint32_t       chunk;
     uint32_t       nchunks;
 } ring_t;
@@ -137,6 +149,7 @@ static void ring_bind(ring_t *r, char *base, uint32_t chunk, uint32_t nchunks, i
     r->nchunks = nchunks;
     r->semid = semid;
     r->base = sem_base;
+    r->msgs = (unsigned short)(sem_base + S_MSGS);
 }
 
 static size_t ring_bytes(const ring_t *r) { return (size_t)r->nchunks * r->chunk; }
@@ -221,7 +234,7 @@ static int ring_send(const ring_t *r, const msg_hdr_t *hdr, const void *payload,
     __atomic_store_n(&r->hdr->head, head + k, __ATOMIC_RELEASE);
 
     struct sembuf pub[4] = {
-        { (unsigned short)(r->base + S_MSGS),  1,              0 },
+        { r->msgs,                             1,              0 },
         { (unsigned short)(r->base + S_FREE),  (short)k,       SEM_UNDO },
         { (unsigned short)(r->base + S_FREE),  (short)-(int)k, 0 },
         { (unsigned short)(r->base + S_MUTEX), 1,              SEM_UNDO },
@@ -261,8 +274,11 @@ static ssize_t ring_recv(const ring_t *r, msg_hdr_t *hdr, void *payload, size_t 
 /* ---- 크기 ---- */
 
 typedef struct {
-    uint32_t chunk, req_chunks, resp_chunks;
+    uint32_t chunk, req_chunks, resp_chunks, req_mode;
 } geom_t;
+
+static uint32_t req_rings(const geom_t *g) { return g->req_mode == REQ_PER_CLIENT ? MAX_CLIENTS : 1; }
+static unsigned short total_sem(void) { return (unsigned short)(MAX_CLIENTS * S_PER_RING); }  /* 클라이언트별 요청 링의 TOTAL */
 
 /* 환경 변수 값. 없으면 def, 숫자가 아니면 0 */
 static uint32_t env_u32(const char *name, uint32_t def)
@@ -281,7 +297,11 @@ static int geom_from_env(geom_t *g)
     g->chunk = env_u32("OSP_SHM_CHUNK", DEF_CHUNK);
     if (g->chunk < 64 || g->chunk % 64) { errno = EINVAL; return -1; }     /* 머리가 첫 칸에 들어가고 8B 정렬 */
     uint32_t per_msg = chunks_for(g->chunk, MSG_MAX);
-    g->req_chunks = env_u32("OSP_SHM_REQ_CHUNKS", DEF_REQ_MSGS * per_msg);
+    const char *mode = getenv("OSP_SHM_REQ_RING");
+    if (!mode || !*mode || strcmp(mode, "shared") == 0) g->req_mode = REQ_SHARED;
+    else if (strcmp(mode, "per") == 0) g->req_mode = REQ_PER_CLIENT;
+    else { errno = EINVAL; return -1; }
+    g->req_chunks = env_u32("OSP_SHM_REQ_CHUNKS", (g->req_mode == REQ_PER_CLIENT ? 1u : DEF_REQ_MSGS) * per_msg);
     g->resp_chunks = env_u32("OSP_SHM_RESP_CHUNKS", DEF_RESP_MSGS * per_msg);
     if (g->req_chunks < per_msg || g->resp_chunks < per_msg ||
         g->req_chunks > SEM_MAX_VALUE || g->resp_chunks > SEM_MAX_VALUE) {
@@ -291,7 +311,8 @@ static int geom_from_env(geom_t *g)
     return 0;
 }
 
-static size_t req_seg_size(const geom_t *g)  { return sizeof(seg_hdr_t) + sizeof(ring_hdr_t) + (size_t)g->req_chunks * g->chunk; }
+static size_t req_stride(const geom_t *g)    { return sizeof(ring_hdr_t) + (size_t)g->req_chunks * g->chunk; }
+static size_t req_seg_size(const geom_t *g)  { return sizeof(seg_hdr_t) + req_stride(g) * req_rings(g); }
 static size_t resp_stride(const geom_t *g)   { return sizeof(ring_hdr_t) + (size_t)g->resp_chunks * g->chunk; }
 static size_t resp_seg_size(const geom_t *g) { return resp_stride(g) * MAX_CLIENTS; }
 
@@ -309,7 +330,9 @@ static int srv_lock_fd = -1;
 static int srv_req_shm = -1, srv_resp_shm = -1;
 static int srv_req_sem = -1, srv_resp_sem = -1;
 static char *srv_req_base, *srv_resp_base;
-static ring_t srv_req;                       /* 받는 쪽 */
+static ring_t srv_req[MAX_CLIENTS];         /* 받는 쪽. 기본은 [0] 하나, 클라이언트별이면 MAX_CLIENTS 개 */
+static uint32_t srv_nreq;
+static uint32_t srv_rr;                      /* 클라이언트별 요청 링에서 다음에 먼저 볼 링. 수신 스레드만 쓴다 */
 static ring_t srv_resp[MAX_CLIENTS];         /* 보내는 쪽 */
 static atomic_bool srv_opened;
 static atomic_bool srv_stopping;             /* tp_server_wake 이후 */
@@ -366,12 +389,13 @@ static void remove_stale(void)
     }
 }
 
-/* 링 nrings 개의 세마포어 집합을 만든다. 링마다 MUTEX 1, FREE nchunks, MSGS 0 */
-static int make_sem(key_t key, unsigned nrings, uint32_t nchunks)
+/* 링 nrings 개의 세마포어 집합을 만든다. 링마다 MUTEX 1, FREE nchunks, MSGS 0. 끝에 0 으로 시작하는 세마포어 extra 개 */
+static int make_sem(key_t key, unsigned nrings, uint32_t nchunks, unsigned extra)
 {
-    int id = semget(key, (int)(nrings * S_PER_RING), IPC_CREAT | IPC_EXCL | 0600);
+    unsigned n = nrings * S_PER_RING + extra;
+    int id = semget(key, (int)n, IPC_CREAT | IPC_EXCL | 0600);
     if (id < 0) return -1;
-    unsigned short *vals = malloc(sizeof *vals * nrings * S_PER_RING);
+    unsigned short *vals = calloc(n, sizeof *vals);
     if (!vals) { semctl(id, 0, IPC_RMID); errno = ENOMEM; return -1; }
     for (unsigned i = 0; i < nrings; i++) {
         vals[i * S_PER_RING + S_MUTEX] = 1;
@@ -428,16 +452,22 @@ int tp_server_open(void)
     geom_t g;
     if (geom_from_env(&g) < 0) goto fail;
 
-    srv_req_sem = make_sem(KEY_REQ_SEM, 1, g.req_chunks);
+    srv_nreq = req_rings(&g);
+    srv_rr = 0;
+    srv_req_sem = make_sem(KEY_REQ_SEM, srv_nreq, g.req_chunks, g.req_mode == REQ_PER_CLIENT ? 1 : 0);
     if (srv_req_sem < 0) goto fail;
-    srv_resp_sem = make_sem(KEY_RESP_SEM, MAX_CLIENTS, g.resp_chunks);
+    srv_resp_sem = make_sem(KEY_RESP_SEM, MAX_CLIENTS, g.resp_chunks, 0);
     if (srv_resp_sem < 0) goto fail;
     srv_req_base = make_shm(KEY_REQ_SHM, req_seg_size(&g), &srv_req_shm);
     if (!srv_req_base) goto fail;
     srv_resp_base = make_shm(KEY_RESP_SHM, resp_seg_size(&g), &srv_resp_shm);
     if (!srv_resp_base) goto fail;
 
-    ring_bind(&srv_req, srv_req_base + sizeof(seg_hdr_t), g.chunk, g.req_chunks, srv_req_sem, 0);
+    for (uint32_t i = 0; i < srv_nreq; i++) {
+        ring_bind(&srv_req[i], srv_req_base + sizeof(seg_hdr_t) + (size_t)i * req_stride(&g), g.chunk, g.req_chunks,
+                  srv_req_sem, (unsigned short)(i * S_PER_RING));
+        if (g.req_mode == REQ_PER_CLIENT) srv_req[i].msgs = total_sem();
+    }
     for (uint32_t i = 0; i < MAX_CLIENTS; i++)
         ring_bind(&srv_resp[i], srv_resp_base + (size_t)i * resp_stride(&g), g.chunk, g.resp_chunks,
                   srv_resp_sem, (unsigned short)(i * S_PER_RING));
@@ -446,6 +476,7 @@ int tp_server_open(void)
     sh->chunk = g.chunk;
     sh->req_chunks = g.req_chunks;
     sh->resp_chunks = g.resp_chunks;
+    sh->req_mode = g.req_mode;
     atomic_store(&srv_stopping, false);
     atomic_store(&srv_closing, false);
     atomic_store(&srv_users, 0);
@@ -471,13 +502,26 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
     if (atomic_load(&srv_stopping)) { errno = ECANCELED; goto out; }
 
     /* 요청은 기다릴 상대가 정해져 있지 않다. 시간 제한 없이 기다리고 tp_server_wake 가 깨운다 */
-    struct sembuf wait_msg = { (unsigned short)(srv_req.base + S_MSGS), -1, 0 };
-    if (sem_ops(srv_req.semid, &wait_msg, 1, NULL) < 0) {
-        if (errno == EIDRM) errno = ECANCELED;
-        goto out;
+    for (;;) {
+        struct sembuf wait_msg = { srv_req[0].msgs, -1, 0 };    /* 공유 링의 MSGS, 클라이언트별이면 TOTAL */
+        if (sem_ops(srv_req[0].semid, &wait_msg, 1, NULL) < 0) {
+            if (errno == EIDRM) errno = ECANCELED;
+            goto out;
+        }
+        if (atomic_load(&srv_stopping)) { errno = ECANCELED; goto out; }   /* 깨우기였다 */
+        if (srv_nreq == 1) { n = ring_take(&srv_req[0], hdr, payload, cap); goto out; }
+        /* 클라이언트별 요청 링: 지난번 다음 링부터 돌아가며 메시지가 있는 링을 찾는다 */
+        for (uint32_t i = 0; i < srv_nreq; i++) {
+            uint32_t c = (srv_rr + i) % srv_nreq;
+            ring_t *r = &srv_req[c];
+            if (__atomic_load_n(&r->hdr->head, __ATOMIC_ACQUIRE) != __atomic_load_n(&r->hdr->tail, __ATOMIC_ACQUIRE)) {
+                srv_rr = (c + 1) % srv_nreq;
+                n = ring_take(r, hdr, payload, cap);
+                goto out;
+            }
+        }
+        /* TOTAL 을 얻었는데 메시지가 없다. 보내는 쪽 순서상 생기지 않는다. 다시 기다린다 */
     }
-    if (atomic_load(&srv_stopping)) { errno = ECANCELED; goto out; }   /* 깨우기였다 */
-    n = ring_take(&srv_req, hdr, payload, cap);
 out:
     srv_leave();
     return n;
@@ -505,8 +549,8 @@ void tp_server_wake(void)
 {
     if (!srv_enter()) return;
     atomic_store(&srv_stopping, true);
-    struct sembuf p = { (unsigned short)(srv_req.base + S_MSGS), 1, 0 };
-    while (semop(srv_req.semid, &p, 1) < 0 && errno == EINTR)
+    struct sembuf p = { srv_req[0].msgs, 1, 0 };
+    while (semop(srv_req[0].semid, &p, 1) < 0 && errno == EINTR)
         ;
     srv_leave();
 }
@@ -645,7 +689,8 @@ int tp_client_open(uint32_t client_id)
     }
     seg_hdr_t *sh = (seg_hdr_t *)cli_req_base;
     if (__atomic_load_n(&sh->ready, __ATOMIC_ACQUIRE) != SHM_READY) { errno = ECONNREFUSED; goto fail; }  /* 서버가 아직 만드는 중 */
-    geom_t g = { sh->chunk, sh->req_chunks, sh->resp_chunks };
+    geom_t g = { sh->chunk, sh->req_chunks, sh->resp_chunks, sh->req_mode };
+    if (g.req_mode != REQ_SHARED && g.req_mode != REQ_PER_CLIENT) { errno = ECONNREFUSED; goto fail; }
 
     if (attach(KEY_RESP_SHM, &cli_resp_shm, &cli_resp_base) < 0) {
         if (errno == ENOENT || errno == EIDRM || errno == EINVAL) errno = ECONNREFUSED;
@@ -661,7 +706,13 @@ int tp_client_open(uint32_t client_id)
         goto fail;
     }
 
-    ring_bind(&cli_req, cli_req_base + sizeof(seg_hdr_t), g.chunk, g.req_chunks, cli_req_sem, 0);
+    if (g.req_mode == REQ_PER_CLIENT) {         /* 내 요청 링. 보낸 뒤에는 TOTAL 을 올린다 */
+        ring_bind(&cli_req, cli_req_base + sizeof(seg_hdr_t) + (size_t)client_id * req_stride(&g), g.chunk, g.req_chunks,
+                  cli_req_sem, (unsigned short)(client_id * S_PER_RING));
+        cli_req.msgs = total_sem();
+    } else {
+        ring_bind(&cli_req, cli_req_base + sizeof(seg_hdr_t), g.chunk, g.req_chunks, cli_req_sem, 0);
+    }
     ring_bind(&cli_resp, cli_resp_base + (size_t)client_id * resp_stride(&g), g.chunk, g.resp_chunks,
               cli_resp_sem, (unsigned short)(client_id * S_PER_RING));
 
