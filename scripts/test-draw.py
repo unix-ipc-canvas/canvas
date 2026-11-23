@@ -115,9 +115,36 @@ def tty_mode():
     for _, fd in users:
         drain(fd, 0.8)
     a, b = users[0][1], users[1][1]
-    mouse(a, 0, 10, 10, True)                       # 붓으로 끌기: 누름 1 + 끌기 25
-    for x in range(10, 60, 2):
-        mouse(a, 32, x, 10 + (x - 10) // 3, True)
+    # 붓으로 끌기: 누름 1 + 끌기 25. 클라이언트는 보고 사이를 붓 크기(기본 3)의 절반 간격으로 이어 칠하고,
+    # 한 번 끄는 동안 이미 칠한 화면 점은 다시 보내지 않는다(DRAW는 더하기라 겹치면 두 번 더해진다).
+    # 줄마다 칠하지 않은 구간 하나가 DRAW 하나다. 같은 규칙으로 보낼 DRAW 수를 센다.
+    # 화면 120 × 40: 보기 120 × 76점, 배율 ceil(1024/76) = 14, 캔버스는 점 0~73
+    pts = [(10, 10)] + [(x, 10 + (x - 10) // 3) for x in range(10, 60, 2)]
+    pts = [(x - 1, (y - 2) * 2) for x, y in pts]
+    vw, vh, sc = 120, 76, 14
+    done, want = set(), 0
+
+    def square(px, py):
+        nonlocal want
+        for y in range(max(py - 1, 0), min(py + 2, vh)):
+            x, x1 = max(px - 1, 0), min(px + 2, vw)
+            while x < x1:
+                while x < x1 and (x, y) in done:
+                    x += 1
+                a = x
+                while x < x1 and (x, y) not in done:
+                    done.add((x, y)); x += 1
+                if x > a and a * sc < 1024 and y * sc < 1024:
+                    want += 1
+    square(*pts[0])
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        n = max(abs(x1 - x0), abs(y1 - y0))
+        for k in range(1, n + 1):                   # 간격 = 3 // 2 = 1
+            square(x0 + (x1 - x0) * k // n, y0 + (y1 - y0) * k // n)
+    pts = [(x + 1, y // 2 + 2) for x, y in pts]
+    mouse(a, 0, *pts[0], True)
+    for x, y in pts[1:]:
+        mouse(a, 32, x, y, True)
     mouse(a, 0, 60, 27, False)
     os.write(b, b'r3')                              # 사각형 모드, 색 3
     mouse(b, 0, 30, 5, True)                        # 사각형 (화면 120 × 40 이면 캔버스는 왼쪽 64칸)
@@ -136,8 +163,8 @@ def tty_mode():
         codes.append(os.waitstatus_to_exitcode(s))
     rc, _ = stop_server(srv)
     last = st[-1] if st else ('?', '?')
-    good = rc == 0 and codes == [0, 0] and restored and last == ('2', '27')
-    return good, f'화면: 마우스 붓 칠 26번 + 사각형 1개, 상태 줄 접속 {last[0]}명·서버 DRAW {last[1]}, 종료 코드 {codes}, 터미널 복구 {restored}'
+    good = rc == 0 and codes == [0, 0] and restored and last == ('2', str(want + 1))
+    return good, f'화면: 마우스 붓 보고 26번(이어 칠한 DRAW {want}) + 사각형 1개, 상태 줄 접속 {last[0]}명·서버 DRAW {last[1]}, 종료 코드 {codes}, 터미널 복구 {restored}'
 
 
 ok1, m1 = cmd_mode()

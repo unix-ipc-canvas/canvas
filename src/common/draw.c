@@ -96,6 +96,7 @@ static struct {
     int mx, my;                         /* 마우스 위치 (화면 점) */
     bool drag;
     int ax, ay;                         /* 사각형 시작점 (화면 점) */
+    int lx, ly;                         /* 붓이 마지막으로 칠한 점 (화면 점) */
 
     uint32_t n_clients;
     uint64_t srv_draw, my_draw, my_err;
@@ -166,10 +167,11 @@ static int view_h(void) { return 2 * (D.rows - TOP - BOTTOM); }     /* 위아래
 
 static uint32_t fit_scale(void)
 {
-    /* 캔버스 전체가 들어가는 가장 작은 2의 거듭제곱 */
-    uint32_t s = 1;
-    while (((uint32_t)view_w() * s < CANVAS_W || (uint32_t)view_h() * s < CANVAS_H) && s < CANVAS_W) s *= 2;
-    return s;
+    /* 캔버스 전체가 들어가는 가장 작은 정수 배율 (화면을 되도록 넓게 쓴다) */
+    uint32_t w = view_w() > 0 ? (uint32_t)view_w() : 1, h = view_h() > 0 ? (uint32_t)view_h() : 1;
+    uint32_t sx = (CANVAS_W + w - 1) / w, sy = (CANVAS_H + h - 1) / h;
+    uint32_t s = sx > sy ? sx : sy;
+    return s < 1 ? 1 : s;
 }
 
 static void clamp_view(void)
@@ -536,19 +538,58 @@ static void *signal_main(void *arg)
 
 /* ---- 입력 스레드 (터미널) ---- */
 
+/* 한 번 끄는 동안 이미 칠한 화면 점. 응용의 DRAW는 값을 더하므로 붓 정사각형이 겹친 곳이
+ * 두 번 더해지지 않게, 칠하지 않은 점만 보낸다. 입력 스레드만 mtx 를 쥐고 쓴다 */
+static struct {
+    uint8_t *bits;
+    int w, h;
+    uint32_t vx, vy, scale;
+} M;
+
+static void stroke_begin(void)
+{
+    int w = view_w(), h = view_h();
+    if (w <= 0 || h <= 0) return;
+    if (!M.bits || M.w != w || M.h != h) {
+        free(M.bits);
+        M.bits = malloc((size_t)w * (size_t)h);
+        M.w = M.bits ? w : 0; M.h = M.bits ? h : 0;
+    }
+    if (M.bits) memset(M.bits, 0, (size_t)w * (size_t)h);
+    M.vx = D.vx; M.vy = D.vy; M.scale = D.scale;
+}
+
 static void stroke(int px, int py)
 {
-    /* 붓: 마우스 위치를 가운데로 붓 크기 정사각형 (화면 점 → 캔버스 칸) */
-    int h = D.brush / 2;
-    int x0 = px - h, y0 = py - h;
-    uint32_t cx, cy;
-    int sx = x0 < 0 ? 0 : x0, sy = y0 < 0 ? 0 : y0;
-    if (!to_canvas(sx, sy, &cx, &cy)) return;
-    uint32_t w = (uint32_t)(x0 + D.brush - sx) * D.scale, hh = (uint32_t)(y0 + D.brush - sy) * D.scale;
+    /* 붓: 마우스 위치를 가운데로 붓 크기 정사각형. 줄마다 아직 칠하지 않은 점의 구간을 사각형 하나로 보낸다 */
+    if (!M.bits || M.w != view_w() || M.h != view_h() || M.vx != D.vx || M.vy != D.vy || M.scale != D.scale)
+        stroke_begin();                                         /* 끄는 중에 보기가 바뀌었으면 새로 시작 */
+    if (!M.bits) return;
+    int half = D.brush / 2;
+    int x0 = px - half, y0 = py - half, x1 = x0 + D.brush, y1 = y0 + D.brush;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > M.w) x1 = M.w;
+    if (y1 > M.h) y1 = M.h;
     uint8_t v = PALETTE[D.color];
-    pthread_mutex_unlock(&D.mtx);
-    send_draw(cx, cy, w, hh, v);
-    pthread_mutex_lock(&D.mtx);
+    for (int y = y0; y < y1; y++) {
+        int x = x0;
+        while (x < x1) {
+            while (x < x1 && M.bits[(size_t)y * M.w + x]) x++;
+            int a = x;
+            while (x < x1 && !M.bits[(size_t)y * M.w + x]) M.bits[(size_t)y * M.w + x++] = 1;
+            if (x == a) continue;
+            uint32_t cx, cy;
+            if (!to_canvas(a, y, &cx, &cy)) continue;
+            uint64_t ex = D.vx + (uint64_t)x * D.scale, ey = D.vy + (uint64_t)(y + 1) * D.scale;
+            if (ex > CANVAS_W) ex = CANVAS_W;
+            if (ey > CANVAS_H) ey = CANVAS_H;
+            uint32_t w = (uint32_t)(ex - cx), hh = (uint32_t)(ey - cy);
+            pthread_mutex_unlock(&D.mtx);
+            send_draw(cx, cy, w, hh, v);
+            pthread_mutex_lock(&D.mtx);
+        }
+    }
 }
 
 static void zoom(int dir, int px, int py)
@@ -586,10 +627,19 @@ static void mouse(int b, int x, int y, bool press)
     if (b & 64) { zoom(btn == 0 ? 1 : -1, px, py); return; }    /* 휠 */
     if (btn != 0) return;                                       /* 왼쪽 버튼만 */
     if (press && !motion) {                                     /* 누름 */
-        D.drag = true; D.ax = px; D.ay = py;
-        if (D.brush_mode) stroke(px, py);
+        D.drag = true; D.ax = px; D.ay = py; D.lx = px; D.ly = py;
+        if (D.brush_mode) { stroke_begin(); stroke(px, py); }
     } else if (press && motion) {                               /* 끌기 */
-        if (D.drag && D.brush_mode) stroke(px, py);
+        if (D.drag && D.brush_mode) {
+            /* 마우스를 빨리 움직이면 보고 사이가 벌어진다. 마지막 점부터 붓 크기의 절반 간격으로 이어 칠한다 */
+            int dx = px - D.lx, dy = py - D.ly;
+            int n = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+            int gap = D.brush / 2 > 0 ? D.brush / 2 : 1;
+            int steps = (n + gap - 1) / gap;
+            int lx = D.lx, ly = D.ly;
+            for (int k = 1; k <= steps; k++) stroke(lx + dx * k / steps, ly + dy * k / steps);
+            D.lx = px; D.ly = py;
+        }
     } else if (!press && D.drag) {                              /* 뗌 */
         D.drag = false;
         if (!D.brush_mode) {
@@ -901,5 +951,6 @@ int main(int argc, char **argv)
                (unsigned long long)D.my_draw, (unsigned long long)D.my_err, gone ? " (서버가 먼저 끝났다)" : "");
     free(D.rbuf);
     free(D.view);
+    free(M.bits);
     return gone && D.tty ? 1 : 0;
 }
