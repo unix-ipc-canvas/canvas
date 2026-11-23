@@ -87,6 +87,14 @@ else
             else
                 ng T-04 "전송 계층 시험 $i"; grep -v '^PASS' "$log"
             fi
+            # mq 는 큐를 나눈 것(OSP_MQ_QUEUES=4, 펌프 스레드)으로도 같은 시험을 한다
+            if [ "$i" = mq ]; then
+                if OSP_MQ_QUEUES=4 tmo 300 scripts/test-transport.sh "$i" >"$log" 2>&1; then
+                    ok T-04 "전송 계층 시험 $i OSP_MQ_QUEUES=4 ($(grep -c '^PASS' "$log")개 항목)"
+                else
+                    ng T-04 "전송 계층 시험 $i OSP_MQ_QUEUES=4"; grep -v '^PASS' "$log"
+                fi
+            fi
             # shm 은 설계 개선 실험의 클라이언트별 요청 링(OSP_SHM_REQ_RING=per)으로도 같은 시험을 한다
             if [ "$i" = shm ]; then
                 if OSP_SHM_REQ_RING=per tmo 300 scripts/test-transport.sh "$i" >"$log" 2>&1; then
@@ -185,7 +193,7 @@ run_clients() {
 
 srv_sum() { grep '^checksum' "$W/srv.out"; }
 
-RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-30 T-31"
+RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-23 T-24 T-30 T-31"
 app_have=""
 for i in pipe mq shm; do
     [ -x "bin/server_$i" ] && [ -x "bin/client_$i" ] && [ -x "bin/apptest_$i" ] && app_have="$app_have $i"
@@ -369,6 +377,38 @@ else
             else ng T-19 "$(tail -1 "$log" | sed 's/^ng *//')"; make -s ipcclean >/dev/null 2>&1; fi
         else
             sk T-19 "$i: bin/draw_$i 또는 python3 없음"
+        fi
+
+        # T-23 그림판 4개(-K 4)에 클라이언트 8개가 나눠 그리기: 방마다 체크섬 = 검증기(-K 4), 없는 방 번호는 오류 응답
+        srv_start "$i" -K 4 -l tile -w 8
+        pids=""
+        for c in 0 1 2 3 4 5 6 7; do
+            tmo 60 "bin/client_$i" -i "$c" -k $((c % 4)) -n 1000 -w 20 -f 8 >"$W/r$c.out" 2>&1 &
+            pids="$pids $!"
+        done
+        cf=0; for p in $pids; do wait "$p" || cf=$((cf + 1)); done
+        tmo 20 "bin/client_$i" -i 9 -k 5 -n 10 -w 0 -m 100 >"$W/r9.out" 2>&1; bad_room=$?
+        srv_stop; rc=$?
+        want=$(bin/verify -c 8 -n 1000 -K 4 2>/dev/null | tail -1)
+        rooms_srv=$(grep -c '^room [0-3] checksum' "$W/srv.out")
+        rooms_ok=$(bin/verify -c 8 -n 1000 -K 4 2>/dev/null | grep '^room' | grep -cxFf - "$W/srv.out")
+        if [ "$cf" = 0 ] && [ "$rc" = 0 ] && [ "$(srv_sum)" = "$want" ] && [ "$rooms_ok" = 4 ] && [ "$bad_room" != 0 ]; then
+            ok T-23 "$i: 방 4개 × 클라이언트 8개, 방마다 체크섬 = 검증기 (${rooms_ok}/4), 없는 방(5) 요청은 오류 응답"
+        else
+            ng T-23 "$i: 클라이언트 실패 $cf, 서버 $rc, 방 체크섬 맞음 $rooms_ok/4(서버 줄 $rooms_srv), 없는 방 클라이언트 종료 코드 $bad_room"
+        fi
+
+        # T-24 클라이언트 256개가 방 16개에 한꺼번에: 모두 끝나고 방마다 체크섬 = 검증기, 자원이 남지 않는다.
+        # mq 는 큐를 16쌍으로 나누고(OSP_MQ_QUEUES), shm 은 클라이언트별 요청 링(OSP_SHM_REQ_RING=per)으로 돈다
+        case $i in
+            mq)  sev="OSP_MQ_QUEUES=16" ;;
+            shm) sev="OSP_SHM_REQ_RING=per" ;;
+            *)   sev="" ;;
+        esac
+        if env $sev LIMIT=120 timeout -k 5 200 scripts/scale-test.sh "$i" 256 16 100 4 -l tile -w 8 >"$log" 2>&1; then
+            ok T-24 "$(tail -1 "$log" | sed 's/^ok *//') ${sev:+($sev)}"
+        else
+            ng T-24 "$(tail -1 "$log") ${sev:+($sev)}"; tail -5 "$log"; make -s ipcclean >/dev/null 2>&1
         fi
     done
 

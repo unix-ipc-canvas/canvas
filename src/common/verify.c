@@ -25,22 +25,23 @@
 #include "workload.h"
 
 #define MAX_REQUESTS 10000000ull    /* client.c 의 -n 한도와 같다 */
-#define MAX_SEEDS    64u            /* 시드 개수 한도. 동시 클라이언트(MAX_CLIENTS)보다 넉넉히 */
+#define MAX_SEEDS    MAX_CLIENTS    /* 시드 개수 한도 = 동시 클라이언트 수 한도 */
 
 static void usage(const char *prog)
 {
     fprintf(stderr,
-            "사용법: %s [-s 시드]... [-c 클라이언트수] [-n 요청수] [-m DRAW%%] [-r 변] [-S 변]\n"
+            "사용법: %s [-s 시드]... [-c 클라이언트수] [-n 요청수] [-m DRAW%%] [-r 변] [-S 변] [-K 방수]\n"
             "  -s N   재생할 클라이언트의 시드. 클라이언트마다 하나씩 여러 번 준다 (최대 %u개)\n"
             "  -c K   클라이언트 번호 0~K-1 의 기본 시드(번호 + 1)를 더한다, 1~%u\n"
             "  -n N   클라이언트마다 잰 요청 수 (기본 20000)\n"
             "  -m N   DRAW 비율 %% (기본 %u)\n"
             "  -r N   DRAW 사각형 한 변 1~%u (기본 %u)\n"
             "  -S N   SNAPSHOT 영역 한 변 1~%u (기본 %u)\n"
+            "  -K N   그림판(방) 수 1~%u (기본 1). k 번째 시드의 클라이언트는 방 k %% N 에 그렸다고 본다\n"
             "시드를 하나도 주지 않으면 빈 캔버스의 체크섬을 쓴다.\n"
-            "출력: checksum <16자리 16진수>\n",
+            "출력: checksum <16자리 16진수> (방이 여럿이면 앞에 room <번호> checksum <값> 줄)\n",
             prog, MAX_SEEDS, MAX_CLIENTS, WL_DRAW_PCT_DEFAULT,
-            CANVAS_W, WL_RECT_DEFAULT, CANVAS_W, WL_SNAP_DEFAULT);
+            CANVAS_W, WL_RECT_DEFAULT, CANVAS_W, WL_SNAP_DEFAULT, MAX_ROOMS);
 }
 
 static int parse_u64(const char *s, uint64_t *out)
@@ -55,14 +56,15 @@ static int parse_u64(const char *s, uint64_t *out)
 
 int main(int argc, char **argv)
 {
-    uint64_t seeds[MAX_SEEDS];
+    static uint64_t seeds[MAX_SEEDS];
+    uint32_t rooms = 1;
     unsigned nseeds = 0;
     uint64_t n = 20000;
     uint32_t draw_pct = WL_DRAW_PCT_DEFAULT, rect = WL_RECT_DEFAULT, snap = WL_SNAP_DEFAULT;
 
     uint64_t v;
     int opt;
-    while ((opt = getopt(argc, argv, "s:c:n:m:r:S:h")) != -1) {
+    while ((opt = getopt(argc, argv, "s:c:n:m:r:S:K:h")) != -1) {
         switch (opt) {
         case 's':
             if (parse_u64(optarg, &v) < 0 || nseeds >= MAX_SEEDS) goto bad;
@@ -76,6 +78,7 @@ int main(int argc, char **argv)
         case 'm': if (parse_u64(optarg, &v) < 0 || v > 100) goto bad; draw_pct = (uint32_t)v; break;
         case 'r': if (parse_u64(optarg, &v) < 0 || v < 1 || v > CANVAS_W) goto bad; rect = (uint32_t)v; break;
         case 'S': if (parse_u64(optarg, &v) < 0 || v < 1 || v > CANVAS_W) goto bad; snap = (uint32_t)v; break;
+        case 'K': if (parse_u64(optarg, &v) < 0 || v < 1 || v > MAX_ROOMS) goto bad; rooms = (uint32_t)v; break;
         case 'h': usage(argv[0]); return 0;
         default: goto bad;
         }
@@ -85,8 +88,10 @@ int main(int argc, char **argv)
     workload_t wl;
     if (workload_init(&wl, 0, draw_pct, rect, snap) < 0) goto bad;
 
-    canvas_t *c = canvas_create(LOCK_NONE, TILE_DEFAULT);     /* 스레드 하나라 락이 필요 없다 */
-    if (!c) {
+    canvas_t *cv[MAX_ROOMS] = { 0 };
+    bool mem_ok = true;
+    for (uint32_t k = 0; k < rooms; k++) mem_ok = mem_ok && (cv[k] = canvas_create(LOCK_NONE, TILE_DEFAULT)) != NULL;  /* 스레드 하나라 락이 필요 없다 */
+    if (!mem_ok) {
         fprintf(stderr, "verify: 캔버스를 만들지 못함: %s\n", strerror(errno));
         return 1;
     }
@@ -98,18 +103,23 @@ int main(int argc, char **argv)
             wl_req_t r;
             workload_next(&wl, &r);
             if (r.type != REQ_DRAW) continue;
-            if (canvas_draw(c, &r.p.draw, NULL) < 0) {      /* 생성기는 잘못된 영역을 만들지 않는다 */
+            if (canvas_draw(cv[k % rooms], &r.p.draw, NULL) < 0) {      /* 생성기는 잘못된 영역을 만들지 않는다 */
                 fprintf(stderr, "verify: 시드 %" PRIu64 "의 %" PRIu64 "번째 요청이 캔버스를 벗어났다\n", seeds[k], i);
-                canvas_destroy(c);
+                for (uint32_t q = 0; q < rooms; q++) canvas_destroy(cv[q]);
                 return 1;
             }
             n_draw++;
         }
     }
 
-    printf("checksum " CANVAS_CHECKSUM_FMT "\n", canvas_checksum(c));
+    uint64_t sums[MAX_ROOMS];
+    for (uint32_t q = 0; q < rooms; q++) {
+        sums[q] = canvas_checksum(cv[q]);
+        if (rooms > 1) printf("room %u checksum " CANVAS_CHECKSUM_FMT "\n", q, sums[q]);
+    }
+    printf("checksum " CANVAS_CHECKSUM_FMT "\n", canvas_checksum_rooms(sums, rooms));
     fprintf(stderr, "verify: 시드 %u개 × 요청 %" PRIu64 "개 재생, DRAW %" PRIu64 "개\n", nseeds, nseeds ? n : 0, n_draw);
-    canvas_destroy(c);
+    for (uint32_t q = 0; q < rooms; q++) canvas_destroy(cv[q]);
     return 0;
 
 bad:

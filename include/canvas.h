@@ -89,6 +89,9 @@ int canvas_snapshot(canvas_t *c, const snap_req_t *s, void *out, uint64_t *t_loc
  */
 uint64_t canvas_checksum(const canvas_t *c);
 
+/* 방 여러 개의 체크섬을 하나로. n == 1 이면 sums[0] 그대로, 아니면 방 순서대로 이은 체크섬 값 8B 들의 FNV-1a */
+uint64_t canvas_checksum_rooms(const uint64_t *sums, uint32_t n);
+
 /* 캔버스를 1024 × 1024 회색조 PGM(P5) 파일로 저장한다 (요구사항 F-9). 락을 잡지 않는다. 성공 0, 실패 -1 */
 int canvas_save_pgm(const canvas_t *c, const char *path);
 

@@ -241,3 +241,15 @@ int canvas_save_pgm(const canvas_t *c, const char *path)
     if (!ok) { errno = e ? e : EIO; return -1; }
     return 0;
 }
+
+uint64_t canvas_checksum_rooms(const uint64_t *sums, uint32_t n)
+{
+    if (n == 1) return sums[0];
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (uint32_t r = 0; r < n; r++)
+        for (int b = 0; b < 8; b++) {
+            h ^= (sums[r] >> (8 * b)) & 0xff;
+            h *= 0x100000001b3ull;
+        }
+    return h;
+}

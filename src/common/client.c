@@ -71,7 +71,7 @@
 #define STATS_RESP_LEN  (sizeof(srv_ts_t) + sizeof(stats_resp_t))
 
 typedef struct {
-    uint32_t    id;
+    uint32_t    id, room;
     uint64_t    seed, n, warm;
     bool        gate;       /* -G: 워밍업 뒤 SIGUSR2 를 받아야 측정을 시작한다 */
     uint32_t    draw_pct, rect, snap, inflight;
@@ -223,6 +223,7 @@ static int send_one(uint32_t type, const void *payload, uint32_t len, size_t res
     memset(&h, 0, sizeof h);
     h.type = type;
     h.client_id = C.cfg.id;
+    h.reserved = C.cfg.room;        /* 그림판(방) 번호 */
     h.req_id = id;
     h.payload_len = len;
 
@@ -526,8 +527,9 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
             "사용법: %s [-i 번호] [-s 시드] [-n 요청수] [-w 워밍업] [-m DRAW%%] [-r 변] [-S 변] [-f 동시요청]\n"
-            "          [-o 결과.csv] [-e 실험] [-R 반복] [-C 커밋] [-c 클라이언트수] [-L 락] [-T 타일] [-G]\n"
+            "          [-o 결과.csv] [-e 실험] [-R 반복] [-C 커밋] [-c 클라이언트수] [-L 락] [-T 타일] [-G] [-k 방]\n"
             "  -i N   클라이언트 번호 0~%u (기본 0)\n"
+            "  -k N   그릴 그림판(방) 번호. 서버 -K 의 방 수보다 작아야 한다 (기본 0)\n"
             "  -s N   시드 (기본 번호 + 1)\n"
             "  -n N   잴 요청 수 (기본 20000)\n"
             "  -w N   워밍업 요청 수. 캔버스를 바꾸지 않는다 (기본 500)\n"
@@ -611,9 +613,10 @@ int main(int argc, char **argv)
     bool have_seed = false;
     uint64_t v;
     int opt;
-    while ((opt = getopt(argc, argv, "i:s:n:w:m:r:S:f:o:e:R:C:c:L:T:Gh")) != -1) {
+    while ((opt = getopt(argc, argv, "i:k:s:n:w:m:r:S:f:o:e:R:C:c:L:T:Gh")) != -1) {
         switch (opt) {
         case 'i': if (parse_u64(optarg, &v) < 0 || v >= MAX_CLIENTS) goto bad; cfg->id = (uint32_t)v; break;
+        case 'k': if (parse_u64(optarg, &v) < 0 || v >= MAX_ROOMS) goto bad; cfg->room = (uint32_t)v; break;
         case 's': if (parse_u64(optarg, &v) < 0) goto bad; cfg->seed = v; have_seed = true; break;
         case 'n': if (parse_u64(optarg, &v) < 0 || v < 1 || v > MAX_REQUESTS) goto bad; cfg->n = v; break;
         case 'w': if (parse_u64(optarg, &v) < 0 || v > MAX_WARM) goto bad; cfg->warm = v; break;

@@ -66,6 +66,7 @@ typedef struct { uint8_t type; uint64_t t_send; uint16_t x, y, w, h; bool used; 
 static struct {
     /* 설정 */
     uint32_t id;
+    uint32_t room;                      /* 그림판(방) 번호 */
     int interval_ms;
     bool tty;
 
@@ -209,6 +210,7 @@ static int send_req(uint32_t type, const void *payload, uint32_t len, const snap
     memset(&h, 0, sizeof h);
     h.type = type;
     h.client_id = D.id;
+    h.reserved = D.room;
     h.req_id = atomic_fetch_add(&D.next_id, 1);
     h.payload_len = len;
 
@@ -457,8 +459,8 @@ static void render(buf_t *b)
     color_of(PALETTE[D.color], &r, &g, &bl);
     char line[512];
     int n = snprintf(line, sizeof line,
-        " draw_%s  #%u  접속 %u명  서버 DRAW %llu  내 DRAW %llu  왕복 %.2fms  %s  확대 1/%u  %s%u,%u  %s",
-        IPC_NAME, D.id, D.n_clients, (unsigned long long)D.srv_draw, (unsigned long long)D.my_draw, D.rtt_us / 1000.0,
+        " draw_%s  #%u  방 %u  접속 %u명  서버 DRAW %llu  내 DRAW %llu  왕복 %.2fms  %s  확대 1/%u  %s%u,%u  %s",
+        IPC_NAME, D.id, D.room, D.n_clients, (unsigned long long)D.srv_draw, (unsigned long long)D.my_draw, D.rtt_us / 1000.0,
         D.brush_mode ? "붓" : "사각형", D.scale, in ? "" : "(밖) ", cx, cy, D.note);
     (void)n;
     bprintf(b, "\033[0m\033[48;2;40;44;60m\033[38;2;230;233;240m%s \033[48;2;%d;%d;%dm  \033[48;2;40;44;60m 색 %d", line, r, g, bl, D.color + 1);
@@ -820,8 +822,9 @@ static int hello(void)
 static void usage(const char *p)
 {
     fprintf(stderr,
-        "사용법: %s [-i 번호] [-I 갱신ms]\n"
+        "사용법: %s [-i 번호] [-k 방] [-I 갱신ms]\n"
         "  -i N   클라이언트 번호 0~%u (기본: 비어 있는 번호를 고른다)\n"
+        "  -k N   들어갈 그림판(방) 번호 (기본 0). 서버 -K 의 방 수보다 작아야 한다\n"
         "  -I MS  보이는 영역을 다시 받는 주기 (기본 150, 20~5000)\n"
         "  표준 입력이 터미널이면 마우스로 그리는 화면, 아니면 명령 줄(draw/sync/snap/stats/sleep/quit)을 읽는다\n",
         p, MAX_CLIENTS - 1);
@@ -845,10 +848,11 @@ int main(int argc, char **argv)
     long id = -1;
     D.interval_ms = 150;
     int opt;
-    while ((opt = getopt(argc, argv, "i:I:h")) != -1) {
+    while ((opt = getopt(argc, argv, "i:k:I:h")) != -1) {
         char *end;
         switch (opt) {
         case 'i': id = strtol(optarg, &end, 10); if (*end || id < 0 || id >= (long)MAX_CLIENTS) { usage(argv[0]); return 2; } break;
+        case 'k': { long k = strtol(optarg, &end, 10); if (*end || k < 0 || k >= (long)MAX_ROOMS) { usage(argv[0]); return 2; } D.room = (uint32_t)k; break; }
         case 'I': D.interval_ms = (int)strtol(optarg, &end, 10); if (*end || D.interval_ms < 20 || D.interval_ms > 5000) { usage(argv[0]); return 2; } break;
         default: usage(argv[0]); return opt == 'h' ? 0 : 2;
         }
