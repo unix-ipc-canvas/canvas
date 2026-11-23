@@ -53,7 +53,7 @@
 - [x] 체크섬 일치와 불일치 장면: [락 있음은 일치, `-l none`은 불일치](../assets/captures/stage2-checksum.png)
 - [x] 캔버스 이미지: [요청 120개로 그린 데모](../assets/captures/stage2-canvas-demo.png)(클라이언트 2, `-n 60 -m 100 -r 160`), [shm 실행 화면의 캔버스](../assets/captures/stage2-canvas.png)(클라이언트 4 × 기준 조건 20,000개라 값이 고르게 섞여 잡음처럼 보인다)
 - [x] 2단계 측정 실행 기록: [서버 비교, 본 측정, 원인 확인 실험](../assets/captures/stage2-run-record.png), [설계 개선 실험](../assets/captures/stage2-t6-record.png)
-- [ ] 주요 AI 대화 기록
+- [ ] 주요 AI 대화 기록 (이동건 분: [주제 분석과 설계 초안](../records/ai-chats/2026-11-05_주제분석과_설계초안_이동건.md), [C 담당 구현·측정·검증](../records/ai-chats/2026-11-18_C담당_구현측정검증_이동건.md). pinoba, hyungunoh321 분 남음)
 
 ## 제출 전 수동 확인
 
