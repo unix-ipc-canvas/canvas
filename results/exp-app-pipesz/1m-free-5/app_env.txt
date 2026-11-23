@@ -1,0 +1,88 @@
+# scripts/app-bench.sh 가 측정을 시작할 때 기록한 환경
+date: 2026-11-23T20:30:13+09:00
+commit: 0e0042f
+reps: 2, ipcs: pipe, experiments: type base, workers: 1 2 4 8
+
+## lscpu
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      22%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+
+## free -h
+               total        used        free      shared  buff/cache   available
+Mem:            14Gi       5.5Gi       5.0Gi       846Mi       5.0Gi       9.3Gi
+
+## os
+Ubuntu 26.04.1 LTS
+7.0.0-43-generic
+
+## gcc
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+
+## virtualization
+none
+
+## cpufreq governor
+     12 powersave
+
+## CPU 배치 (taskset 으로 묶었는지)
+pid 41033's current affinity list: 0-11
+
+## IPC 한도
+msgmax: 8192
+msgmnb: 16384
+PIPE_BUF: 4096
+pipe-max-size: 1048576
+ulimit -n: 524288
+
+## 전송 계층 환경 변수 (OSP_*, 설계 개선 실험)
+OSP_PIPE_SZ=1048576
+
+## 측정 시작 때 CPU 를 쓰는 프로세스
+ 20:30:13 up 50 min,  1 user,  load average: 1.67, 1.41, 1.01
+top - 20:30:14 up 50 min,  1 user,  load average: 1.54, 1.38, 1.01
+Tasks: 407 total,   1 running, 406 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  1.0 us,  0.6 sy,  0.0 ni, 98.4 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15156.7 total,   5130.1 free,   5598.4 used,   5143.4 buff/cache     
+MiB Swap:   4096.0 total,   4096.0 free,      0.0 used.   9558.3 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   4596 movingg+  20   0 6988404 334600 209420 S   8.9   2.2   4:41.24 gnome-shell
+   6036 movingg+  20   0   12.6g 759980 344256 S   4.0   4.9   2:55.38 firefox
+   7387 movingg+  20   0 3805852 634056 133160 S   2.0   4.1   2:02.36 Isolated Web Co
+   9083 movingg+  20   0   53.0g 172472 148040 S   1.0   1.1   1:33.40 claude-desktop
+  41246 movingg+  20   0    7776   5776   3688 R   1.0   0.0   0:00.03 top
+      1 root      20   0   25952  16656  11224 S   0.0   0.1   0:02.43 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.01 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_workqueue_release
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-rcu_gp
+      5 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-sync_wq
+      6 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-kvfree_rcu_reclaim
+      7 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-slub_flushwq
+
+## 측정 끝: 2026-11-23T20:30:41+09:00, 27초, 실행 24 번, 실패 0 번
+
+## 측정 끝 때 CPU 를 쓰는 프로세스
+ 20:30:41 up 50 min,  1 user,  load average: 1.42, 1.37, 1.01
+top - 20:30:42 up 50 min,  1 user,  load average: 1.42, 1.37, 1.01
+Tasks: 409 total,   1 running, 408 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  1.2 us,  0.7 sy,  0.0 ni, 98.1 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15156.7 total,   4917.9 free,   5810.5 used,   5144.6 buff/cache     
+MiB Swap:   4096.0 total,   4096.0 free,      0.0 used.   9346.3 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   4596 movingg+  20   0 6988396 334708 209420 S   7.9   2.2   4:42.70 gnome-shell
+  23158 movingg+  20   0 1827912 213200 156084 S   5.0   1.4   0:05.74 ptyxis
+   6036 movingg+  20   0   12.6g 759980 344256 S   4.0   4.9   2:55.95 firefox
+   7387 movingg+  20   0 3805868 634076 133160 S   3.0   4.1   2:02.81 Isolated Web Co
+  42035 movingg+  20   0    7776   5756   3672 R   2.0   0.0   0:00.04 top
+   6897 movingg+  20   0 3211448 353000 129404 S   1.0   2.3   0:13.07 Isolated Web Co
+   9083 movingg+  20   0   53.0g 172472 148040 S   1.0   1.1   1:33.53 claude-desktop
+      1 root      20   0   25952  16656  11224 S   0.0   0.1   0:02.45 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.01 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_workqueue_release
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-rcu_gp
+      5 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-sync_wq
