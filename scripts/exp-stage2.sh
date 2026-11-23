@@ -16,10 +16,13 @@
 #   shmmem     메모리 절감(N-5, T6). shm 의 클라이언트 수·요청 종류별 실험을 링 기본(요청 4개·응답 2개 분량),
 #              요청 링만 최소(가장 큰 메시지 1개, 257칸), 둘 다 최소로, 묶지 않은 것과 P코어에 묶은 것 각각 번갈아
 #                                                                          -> results/exp-app-shmmem/<링>-<배치>-<번>/
+#   pipesz2    pipesz 교차 확인. 1MB 응답에서 버퍼 1MB 가 오히려 느린 결과를 버퍼 256KB 를 더해 다시 본다.
+#              응용은 요청 종류별 실험(3번 번갈아 조건마다 6번)    -> results/exp-app-pipesz2/<버퍼>-<배치>-<번>/
+#              1단계 echo 벤치(bench_pipe, 256KB·1MB, -f 1·16, 5번 번갈아) -> results/exp-pipesz-bench/bench_pipe.csv
 # 반복은 5번(placement 는 2번). 표본을 모으는 placement 는 표본 수집이 CPU 를 써서 처리량을 비교에 쓰지 않는다.
 # pipesz, shmmem 은 서버 비교(results/exp-app-servercmp/)와 같은 방식이다: 조건들을 REPS=2 씩 다른 폴더로 번갈아 부른다.
 # pipesz 는 5번 번갈아 조건마다 10번(약 15~20분), shmmem 은 조건이 3개라 3번 번갈아 조건마다 6번(약 25분).
-# 기본 실행 목록에는 넣지 않는다: EXPS="pipesz shmmem" scripts/exp-stage2.sh
+# 기본 실행 목록에는 넣지 않는다: EXPS="pipesz shmmem pipesz2" scripts/exp-stage2.sh
 set -u
 cd "$(dirname "$0")/.."
 EXPS=${EXPS:-"wsteps ecore pcore placement ecore-mix pcore-mix"}
@@ -47,6 +50,30 @@ for e in $EXPS; do
                         $pin scripts/app-bench.sh || rc=1
                     OSP_PIPE_SZ=1048576 REPS=2 IPCS=pipe EXPS="type base" OUT=results/exp-app-pipesz/1m-$p-$k \
                         $pin scripts/app-bench.sh || rc=1
+                done
+            done ;;
+        pipesz2)
+            make -s >/dev/null || { rc=1; continue; }
+            B=results/exp-pipesz-bench; mkdir -p $B; c=$(git rev-parse --short HEAD)
+            for k in 1 2 3 4 5; do
+                for p in free pcore; do
+                    pin=""; [ "$p" = pcore ] && pin="taskset -c 0-3"
+                    for sz in 65536 262144 1048576; do
+                        if [ $sz = 65536 ]; then pre="env -u OSP_PIPE_SZ"; else pre="env OSP_PIPE_SZ=$sz"; fi
+                        for s in 262144 1048576; do
+                            for fl in 1 16; do
+                                $pre $pin ./bin/bench_pipe -c 1 -s $s -n 2000 -f $fl -e buf$sz-$p -r $k -o $B/bench_pipe.csv -C $c || rc=1
+                            done
+                        done
+                    done
+                done
+            done
+            for k in 1 2 3; do
+                for p in free pcore; do
+                    pin=""; [ "$p" = pcore ] && pin="taskset -c 0-3"
+                    env -u OSP_PIPE_SZ REPS=2 IPCS=pipe EXPS=type OUT=results/exp-app-pipesz2/64k-$p-$k $pin scripts/app-bench.sh || rc=1
+                    OSP_PIPE_SZ=262144 REPS=2 IPCS=pipe EXPS=type OUT=results/exp-app-pipesz2/256k-$p-$k $pin scripts/app-bench.sh || rc=1
+                    OSP_PIPE_SZ=1048576 REPS=2 IPCS=pipe EXPS=type OUT=results/exp-app-pipesz2/1m-$p-$k $pin scripts/app-bench.sh || rc=1
                 done
             done ;;
         shmmem)
