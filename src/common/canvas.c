@@ -130,6 +130,17 @@ static void lock_rect(canvas_t *c, uint32_t x, uint32_t y, uint32_t w, uint32_t 
     if (c->mode == LOCK_GLOBAL) { pthread_mutex_lock(&c->global); return; }
 
     uint32_t t = c->tile, cols = tile_cols(t);
+#ifdef DEMO_UNORDERED_LOCKS                 /* 동기화 시연용 빌드(scripts/race-demo.sh)에서만: 읽기는 내림차순으로 잡는다 */
+    if (want == WANT_READ) {
+        for (uint32_t ty = (y + h - 1) / t + 1; ty-- > y / t;)
+            for (uint32_t tx = (x + w - 1) / t + 1; tx-- > x / t;) {
+                uint32_t i = ty * cols + tx;
+                if (c->mode == LOCK_TILE) pthread_mutex_lock(&c->mtx[i]);
+                else                      pthread_rwlock_rdlock(&c->rw[i]);
+            }
+        return;
+    }
+#endif
     for (uint32_t ty = y / t; ty <= (y + h - 1) / t; ty++) {
         for (uint32_t tx = x / t; tx <= (x + w - 1) / t; tx++) {
             uint32_t i = ty * cols + tx;

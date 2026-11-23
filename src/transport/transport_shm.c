@@ -220,7 +220,11 @@ static int ring_send(const ring_t *r, const msg_hdr_t *hdr, const void *payload,
         { (unsigned short)(r->base + S_FREE),  (short)-(int)k, SEM_UNDO },
         { (unsigned short)(r->base + S_MUTEX), -1,             SEM_UNDO },
     };
+#ifdef DEMO_NO_SHM_MUTEX                /* 동기화 시연용 빌드(scripts/race-demo.sh)에서만: MUTEX 없이 빈 칸만 얻는다 */
+    if (sem_ops(r->semid, acq, 1, w) < 0) return -1;
+#else
     if (sem_ops(r->semid, acq, 2, w) < 0) return -1;
+#endif
 
     /*
      * head 는 MUTEX(세마포어)가 보호한다. 원자적 읽기·쓰기(acquire/release)로 둔 것은 그 순서를 C 메모리 모델로도
@@ -239,7 +243,11 @@ static int ring_send(const ring_t *r, const msg_hdr_t *hdr, const void *payload,
         { (unsigned short)(r->base + S_FREE),  (short)-(int)k, 0 },
         { (unsigned short)(r->base + S_MUTEX), 1,              SEM_UNDO },
     };
+#ifdef DEMO_NO_SHM_MUTEX
+    return sem_ops(r->semid, pub, 3, NULL);
+#else
     return sem_ops(r->semid, pub, 4, NULL);
+#endif
 }
 
 /*
