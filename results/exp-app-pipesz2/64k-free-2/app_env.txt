@@ -1,0 +1,88 @@
+# scripts/app-bench.sh 가 측정을 시작할 때 기록한 환경
+date: 2026-11-23T20:51:33+09:00
+commit: 0e0042f
+reps: 2, ipcs: pipe, experiments: type, workers: 1 2 4 8
+
+## lscpu
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      26%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+
+## free -h
+               total        used        free      shared  buff/cache   available
+Mem:            14Gi       6.4Gi       3.7Gi       1.6Gi       6.2Gi       8.4Gi
+
+## os
+Ubuntu 26.04.1 LTS
+7.0.0-43-generic
+
+## gcc
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+
+## virtualization
+none
+
+## cpufreq governor
+     12 powersave
+
+## CPU 배치 (taskset 으로 묶었는지)
+pid 73353's current affinity list: 0-11
+
+## IPC 한도
+msgmax: 8192
+msgmnb: 16384
+PIPE_BUF: 4096
+pipe-max-size: 1048576
+ulimit -n: 524288
+
+## 전송 계층 환경 변수 (OSP_*, 설계 개선 실험)
+(없음)
+
+## 측정 시작 때 CPU 를 쓰는 프로세스
+ 20:51:33 up  1:11,  1 user,  load average: 1.27, 1.15, 1.19
+top - 20:51:34 up  1:11,  1 user,  load average: 1.27, 1.15, 1.19
+Tasks: 412 total,   1 running, 411 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  2.4 us,  1.8 sy,  0.0 ni, 95.8 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15156.7 total,   3744.2 free,   6601.0 used,   6335.5 buff/cache     
+MiB Swap:   4096.0 total,   4096.0 free,      0.0 used.   8555.7 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  67152 movingg+  20   0 7048720 850376 817544 S  19.8   5.5   0:35.04 qemu-system-x86
+   9083 movingg+  20   0   53.0g 171032 146608 S   2.0   1.1   1:46.15 claude-desktop
+  73567 movingg+  20   0    7776   5752   3668 R   2.0   0.0   0:00.04 top
+   9005 movingg+  20   0 1448.6g 425980 217464 S   1.0   2.7   1:29.32 claude-desktop
+   9455 movingg+  20   0 1452.1g 671332 148024 S   1.0   4.3   5:21.40 claude-desktop
+  23158 movingg+  20   0 1840060 220848 157488 S   1.0   1.4   0:13.76 ptyxis
+  65943 root      20   0       0      0      0 I   1.0   0.0   0:00.03 kworker/u48:2-events_unbound
+      1 root      20   0   26176  16752  11224 S   0.0   0.1   0:02.59 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.01 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_workqueue_release
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-rcu_gp
+      5 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-sync_wq
+
+## 측정 끝: 2026-11-23T20:51:53+09:00, 19초, 실행 20 번, 실패 0 번
+
+## 측정 끝 때 CPU 를 쓰는 프로세스
+ 20:51:53 up  1:11,  1 user,  load average: 1.58, 1.22, 1.22
+top - 20:51:54 up  1:11,  1 user,  load average: 1.58, 1.22, 1.22
+Tasks: 413 total,   1 running, 412 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  1.4 us,  1.0 sy,  0.0 ni, 97.5 id,  0.0 wa,  0.0 hi,  0.1 si,  0.0 st 
+MiB Mem :  15156.7 total,   3605.2 free,   6740.0 used,   6334.1 buff/cache     
+MiB Swap:   4096.0 total,   4096.0 free,      0.0 used.   8416.8 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  67152 movingg+  20   0 7048720 850376 817544 S  17.8   5.5   0:36.20 qemu-system-x86
+   9083 movingg+  20   0   53.0g 171032 146608 S   2.0   1.1   1:46.27 claude-desktop
+  65943 root      20   0       0      0      0 D   2.0   0.0   0:00.10 kworker/u48:2+kec
+  74170 movingg+  20   0    7776   5872   3784 R   2.0   0.0   0:00.04 top
+    100 root      25   5       0      0      0 S   1.0   0.0   0:00.26 ksmd
+   1850 root      20   0 2541232  49428  33012 S   1.0   0.3   0:08.35 containerd
+   3032 geoclue   20   0 1084768  27584  17220 S   1.0   0.2   0:01.42 geoclue
+   9005 movingg+  20   0 1448.6g 426736 217460 S   1.0   2.7   1:29.50 claude-desktop
+      1 root      20   0   26176  16752  11224 S   0.0   0.1   0:02.59 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.01 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_workqueue_release
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-rcu_gp
