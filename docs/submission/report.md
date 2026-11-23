@@ -35,7 +35,7 @@
 | 6.2, 6.3 | 응용 측정 방법과 결과 | [측정 방법](../measurement/README.md#2단계-실험), [2단계 측정 결과](../measurement/stage2.md), [2단계 측정 요약](../assets/app/summary.md)과 그래프(`results/`에서 `scripts/plot-app.py`가 만든다) | |
 | 6.4 | 예측 대비 실측, 원인 규명 | [2단계 측정 결과의 예측과 비교](../measurement/stage2.md#예측과-비교)와 [원인 확인 실험](../measurement/stage2.md#원인-확인-실험), `results/exp-app-*/` | |
 | 6.5 | 설계 개선 전후 | [2단계 측정 결과의 설계 개선 실험](../measurement/stage2.md#설계-개선-실험-t6), `results/exp-app-pipesz*/`, `results/exp-pipesz-bench/`, `results/exp-app-shmmem/`(요약은 `scripts/compare-app.py`가 만든다) | |
-| 6.6 | IPC 선택 가이드라인 (1쪽 이내) | 6.3~6.5의 결론 | |
+| 6.6 | IPC 선택 가이드라인 (1쪽 이내) | [IPC 선택 가이드라인](../measurement/guideline.md) | |
 | 7 | 팀워크, 역할, 작업 시간 | [역할 분담](../../README.md#역할-분담), [작업 시간](../records/worklog.csv), GitHub의 커밋·PR 기록 | |
 | 8.1 | 결론 | 팀 회의 | |
 | 8.2 | AI 활용, AI가 틀린 사례 2개 이상, AI 코드 결함 | [AI 활용 기록](../records/ai-log.md) | |
