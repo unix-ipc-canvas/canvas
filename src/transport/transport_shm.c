@@ -68,7 +68,9 @@
 #define KEY_RESP_SEM  IPC_KEY(5)
 
 #define PATH_LEN 64
+#ifndef WAIT_MS
 #define WAIT_MS  200                        /* 기다리는 동안 상대를 확인하는 주기 */
+#endif
 
 #define LOCK_SERVER      ((off_t)0)
 #define LOCK_CLIENT(id)  ((off_t)(id) + 1)
@@ -186,7 +188,7 @@ typedef struct {
  */
 static int sem_ops(int semid, struct sembuf *ops, size_t n, const waiter_t *w)
 {
-    struct timespec ts = { 0, WAIT_MS * 1000000L };
+    struct timespec ts = { WAIT_MS / 1000, (WAIT_MS % 1000) * 1000000L };
     for (;;) {
         int rc = (w && w->lock_fd >= 0) ? semtimedop(semid, ops, n, &ts) : semop(semid, ops, n);
         if (rc == 0) return 0;

@@ -27,6 +27,11 @@
 #                                     -> results/exp-app-ipcrank/<all|per>-<배치>-<번>/ (all 은 세 IPC, per 는 shm)
 #   pipeszb    pipesz2 의 echo 벤치를 다른 세션에서 같은 명령으로 다시 (재현 확인, 약 5분)
 #                                                                    -> results/exp-pipesz-bench2/bench_pipe.csv
+#   scale      대규모 버티기(N-7). 클라이언트 16·64·256·1024 개를 그림판 16개에 한꺼번에(scripts/scale-test.sh),
+#              요청은 모두 합쳐 204,800개(클라이언트마다 204800/N), -f 4, 서버 -l tile -w 8. 다섯 설정을 번갈아 3번:
+#              pipe, mq(큐 1쌍), mq(큐 64쌍, OSP_MQ_QUEUES=64), shm(공유 요청 링), shm(클라이언트별 요청 링).
+#              mq 큐 1쌍의 1024개는 끝나지 않으므로 1번째 반복에서만 제한 120초로 돈다 (약 15분)
+#                                                     -> results/exp-scale/scale.csv, results/exp-scale/scale.log
 #   pipelock   원인 확인(T8). pipe 의 긴 꼬리가 송신 잠금(fcntl)의 불공정 때문인지. bench_pipe 를 송신 잠금 기록
 #              (OSP_PIPE_LOCKLOG)과 함께 클라이언트 1·2·4·8, 크기 4KB·64KB·1MB, -f 16, 워밍업 없이(-w 0, 모든 잠금이
 #              측정 구간 안) 5번 (약 5분)
@@ -37,7 +42,7 @@
 # 반복은 5번(placement 는 2번). 표본을 모으는 placement 는 표본 수집이 CPU 를 써서 처리량을 비교에 쓰지 않는다.
 # pipesz, shmmem 은 서버 비교(results/exp-app-servercmp/)와 같은 방식이다: 조건들을 REPS=2 씩 다른 폴더로 번갈아 부른다.
 # pipesz 는 5번 번갈아 조건마다 10번(약 15~20분), shmmem 은 조건이 3개라 3번 번갈아 조건마다 6번(약 25분).
-# 기본 실행 목록에는 넣지 않는다: EXPS="pipesz shmmem pipesz2 shmring pipelock pipecpu ipcrank pipeszb" scripts/exp-stage2.sh
+# 기본 실행 목록에는 넣지 않는다: EXPS="pipesz shmmem pipesz2 shmring pipelock pipecpu ipcrank pipeszb scale" scripts/exp-stage2.sh
 set -u
 cd "$(dirname "$0")/.."
 EXPS=${EXPS:-"wsteps ecore pcore placement ecore-mix pcore-mix"}
@@ -139,6 +144,29 @@ for e in $EXPS; do
                                 $pre $pin ./bin/bench_pipe -c 1 -s $s -n 2000 -f $fl -e buf$sz-$p -r $k -o $B/bench_pipe.csv -C $c || rc=1
                             done
                         done
+                    done
+                done
+            done ;;
+        scale)
+            make -s >/dev/null || { rc=1; continue; }
+            B=results/exp-scale; mkdir -p $B
+            export BENCH_COMMIT; BENCH_COMMIT=$(git rev-parse --short HEAD)
+            for k in 1 2 3; do
+                for N in 16 64 256 1024; do
+                    n=$((204800 / N))
+                    for cfg in pipe mq1 mq64 shm shmper; do
+                        ipc=${cfg%%[0-9]*}; ipc=${ipc%per}
+                        lim=600
+                        if [ "$cfg" = mq1 ] && [ "$N" = 1024 ]; then [ "$k" = 1 ] || continue; lim=120; fi
+                        case $cfg in
+                            mq64)   ev="OSP_MQ_QUEUES=64" ;;
+                            shmper) ev="OSP_SHM_REQ_RING=per" ;;
+                            *)      ev="" ;;
+                        esac
+                        env -u OSP_MQ_QUEUES -u OSP_SHM_REQ_RING -u OSP_SHM_CHUNK -u OSP_SHM_REQ_CHUNKS -u OSP_SHM_RESP_CHUNKS \
+                            $ev LIMIT=$lim CSV=$B/scale.csv EXP=scale-$cfg RUN=$k \
+                            scripts/scale-test.sh "$ipc" "$N" 16 "$n" 4 -l tile -w 8 2>&1 | tail -1 | tee -a $B/scale.log
+                        [ "${PIPESTATUS[0]}" = 0 ] || { [ "$cfg" = mq1 ] && [ "$N" = 1024 ] || rc=1; }
                     done
                 done
             done ;;

@@ -61,6 +61,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/resource.h>
+
 #include "canvas.h"
 #include "transport.h"
 #include "util.h"
@@ -91,7 +93,8 @@ static struct {
     const char      *pgm;
     const char      *csv, *exp, *commit;    /* -O, -e, -C */
     long             run;           /* -R */
-    canvas_t        *cv;
+    canvas_t        *cv[MAX_ROOMS];  /* 그림판(방)마다 캔버스 하나. 락도 방마다 따로다 */
+    uint32_t         rooms;
     uint8_t        **buf;           /* 워커마다(-d 이면 수신 스레드 하나) MAX_PAYLOAD 응답 버퍼 */
 
     /* 작업 큐 */
@@ -105,7 +108,8 @@ static struct {
     _Atomic uint64_t n_draw, n_snap, bytes_sent, n_err, n_drop, n_gone;
     atomic_bool      connected[MAX_CLIENTS];
     _Atomic uint32_t n_clients;
-    _Atomic uint32_t seen;          /* HELLO 를 보낸 적 있는 번호 (CSV 의 clients) */
+    atomic_bool      seen_id[MAX_CLIENTS];
+    _Atomic uint32_t seen;          /* HELLO 를 보낸 적 있는 번호의 수 (CSV 의 clients) */
 
     /* 끝내기 */
     pthread_mutex_t  err_mtx;
@@ -200,12 +204,13 @@ static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
     switch (j->hdr.type) {
     case REQ_HELLO:
         if (!atomic_exchange(&S.connected[id], true)) atomic_fetch_add(&S.n_clients, 1);
-        atomic_fetch_or(&S.seen, 1u << id);
+        if (!atomic_exchange(&S.seen_id[id], true)) atomic_fetch_add(&S.seen, 1);
         ts.t_lock = now_ns();
         break;
 
     case REQ_DRAW:
-        if (j->len != sizeof(draw_req_t) || canvas_draw(S.cv, &j->p.draw, &ts.t_lock) < 0) {
+        if (j->hdr.reserved >= S.rooms || j->len != sizeof(draw_req_t) ||
+            canvas_draw(S.cv[j->hdr.reserved], &j->p.draw, &ts.t_lock) < 0) {
             ok = false;
             break;
         }
@@ -214,8 +219,8 @@ static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
 
     case REQ_SNAPSHOT: {
         const snap_req_t *q = &j->p.snap;
-        if (j->len != sizeof(snap_req_t) || !canvas_rect_ok(q->x, q->y, q->w, q->h) ||
-            canvas_snapshot(S.cv, q, buf + sizeof ts, &ts.t_lock) < 0) {
+        if (j->hdr.reserved >= S.rooms || j->len != sizeof(snap_req_t) || !canvas_rect_ok(q->x, q->y, q->w, q->h) ||
+            canvas_snapshot(S.cv[j->hdr.reserved], q, buf + sizeof ts, &ts.t_lock) < 0) {
             ok = false;
             break;
         }
@@ -336,11 +341,25 @@ static void *admin_main(void *arg)
 
 /* ---- main ---- */
 
+/*
+ * 클라이언트가 많으면(pipe 는 응답 FIFO 를 클라이언트마다 하나씩 연다) 열린 파일 수 기본 한도(1024)를 넘는다.
+ * 이 프로세스의 soft 한도를 hard 한도 안에서 올린다. 관리자 권한이나 시스템 설정은 바꾸지 않는다.
+ */
+static void raise_fd_limit(void)
+{
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) < 0) return;
+    rlim_t want = (rlim_t)MAX_CLIENTS * 2 + 256;
+    if (rl.rlim_max != RLIM_INFINITY && want > rl.rlim_max) want = rl.rlim_max;
+    if (rl.rlim_cur < want) { rl.rlim_cur = want; setrlimit(RLIMIT_NOFILE, &rl); }
+}
+
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: server_%s [-w 워커수] [-l global|tile|tile-rw|none] [-t 타일] [-d] [-p PGM경로]\n"
-            "       [-O CSV -e 실험 -R 반복 -C 커밋]   끝날 때 서버 자원 사용량을 CSV 에 한 줄 (커밋 기본: BENCH_COMMIT)\n", tp_name());
+            "usage: server_%s [-w 워커수] [-l global|tile|tile-rw|none] [-t 타일] [-K 방수] [-d] [-p PGM경로]\n"
+            "       -K N   그림판(방) 수 1~%u (1). 요청 머리의 reserved 가 방 번호다. PGM 은 방 0 만 저장한다\n"
+            "       [-O CSV -e 실험 -R 반복 -C 커밋]   끝날 때 서버 자원 사용량을 CSV 에 한 줄 (커밋 기본: BENCH_COMMIT)\n", tp_name(), MAX_ROOMS);
 }
 
 static bool parse_uint(const char *s, unsigned long lo, unsigned long hi, unsigned long *out)
@@ -372,11 +391,12 @@ int main(int argc, char **argv)
     S.tile = TILE_DEFAULT;
     S.pgm = pgm_default;
     S.run = 1;
+    S.rooms = 1;
     S.commit = getenv("BENCH_COMMIT");
 
     int opt;
     unsigned long v;
-    while ((opt = getopt(argc, argv, "w:l:t:dp:O:e:R:C:h")) != -1) {
+    while ((opt = getopt(argc, argv, "w:l:t:K:dp:O:e:R:C:h")) != -1) {
         switch (opt) {
         case 'w':
             if (!parse_uint(optarg, 1, MAX_WORKERS, &v)) {
@@ -397,6 +417,13 @@ int main(int argc, char **argv)
                 return 1;
             }
             S.tile = (uint32_t)v;
+            break;
+        case 'K':
+            if (!parse_uint(optarg, 1, MAX_ROOMS, &v)) {
+                fprintf(stderr, "server: -K 는 1~%u 이다\n", MAX_ROOMS);
+                return 1;
+            }
+            S.rooms = (uint32_t)v;
             break;
         case 'd': S.direct = true; break;
         case 'p': S.pgm = optarg; break;
@@ -421,9 +448,11 @@ int main(int argc, char **argv)
 
     char eb[128];
     unsigned nbuf = S.direct ? 1 : S.workers;
-    S.cv = canvas_create(S.lock, S.tile);
+    raise_fd_limit();
+    bool mem_ok = true;
+    for (uint32_t r = 0; r < S.rooms; r++) mem_ok = mem_ok && (S.cv[r] = canvas_create(S.lock, S.tile)) != NULL;
     S.buf = calloc(nbuf, sizeof *S.buf);
-    bool mem_ok = S.cv && S.buf;
+    mem_ok = mem_ok && S.buf;
     for (unsigned i = 0; mem_ok && i < nbuf; i++) mem_ok = (S.buf[i] = malloc(MAX_PAYLOAD)) != NULL;
     if (!mem_ok) {
         fprintf(stderr, "server: 메모리 부족\n");
@@ -481,14 +510,17 @@ int main(int argc, char **argv)
     usage_diff(&u1, &u0, &u);
     long rss = vm_rss_kb(), hwm = vm_hwm_kb();
     int rc = S.err[0] ? 1 : 0;
-    uint64_t sum = canvas_checksum(S.cv);
-    if (canvas_save_pgm(S.cv, S.pgm) < 0) {
+    uint64_t room_sum[MAX_ROOMS];
+    for (uint32_t r = 0; r < S.rooms; r++) room_sum[r] = canvas_checksum(S.cv[r]);
+    uint64_t sum = canvas_checksum_rooms(room_sum, S.rooms);    /* 방 하나면 그 캔버스의 체크섬 그대로 */
+    if (canvas_save_pgm(S.cv[0], S.pgm) < 0) {
         fprintf(stderr, "server_%s: %s 에 저장하지 못함: %s\n", tp_name(), S.pgm, err_str(errno, eb, sizeof eb));
         rc = 1;
     }
     tp_server_close();
     pthread_mutex_unlock(&S.close_mtx);
 
+    for (uint32_t r = 0; S.rooms > 1 && r < S.rooms; r++) printf("room %u checksum " CANVAS_CHECKSUM_FMT "\n", r, room_sum[r]);
     printf("checksum " CANVAS_CHECKSUM_FMT "\n", sum);
     printf("server_%s: DRAW %" PRIu64 ", SNAPSHOT %" PRIu64 ", 오류 응답 %" PRIu64 ", 보낸 바이트 %" PRIu64
            ", 버린 요청 %" PRIu64 ", 받는 쪽이 끝난 응답 %" PRIu64 "\n",
@@ -507,7 +539,7 @@ int main(int argc, char **argv)
         row.experiment = S.exp;
         row.commit = S.commit;
         row.run = S.run;
-        row.clients = __builtin_popcount(atomic_load(&S.seen));
+        row.clients = (long)atomic_load(&S.seen);
         row.workers = S.direct ? 0 : (long)S.workers;
         row.lock = lock_mode_name(S.lock);
         row.tile = S.tile;
@@ -532,6 +564,6 @@ int main(int argc, char **argv)
     for (unsigned i = 0; i < nbuf; i++) free(S.buf[i]);
     free(S.buf);
     free(wk);
-    canvas_destroy(S.cv);
+    for (uint32_t r = 0; r < S.rooms; r++) canvas_destroy(S.cv[r]);
     return rc;
 }
