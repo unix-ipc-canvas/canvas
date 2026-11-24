@@ -73,7 +73,7 @@ static const char *IPC_NAME = "?";       /* 실행 파일 이름(draw_shm)에서
 /* 더할 값 9가지. 서로 더해도 0(바탕)이 잘 나오지 않게 고른 값 */
 static const uint8_t PALETTE[9] = { 40, 72, 104, 136, 168, 200, 232, 24, 56 };
 
-typedef struct { uint8_t type; uint64_t t_send; uint16_t x, y, w, h; bool used; } slot_t;
+typedef struct { uint64_t req_id; uint8_t type; uint64_t t_send; uint16_t x, y, w, h; bool used; } slot_t;
 
 static struct {
     /* 설정 */
@@ -120,7 +120,7 @@ static struct {
 
     /* 명령 줄 모드 */
     pthread_cond_t got;                 /* snap·stats 결과가 왔다 */
-    bool want_snap, snap_done, want_stats, stats_done;
+    bool want_snap, snap_done, snap_ok, want_stats, stats_done, stats_ok;
     uint64_t snap_sum;
     size_t snap_len;
 } D = { .mtx = PTHREAD_MUTEX_INITIALIZER, .redraw = PTHREAD_COND_INITIALIZER,
@@ -235,7 +235,7 @@ static int send_req(uint32_t type, const void *payload, uint32_t len, const snap
         errno = EAGAIN;
         return -1;
     }
-    *s = (slot_t){ .type = (uint8_t)type, .t_send = now_ns(), .used = true };
+    *s = (slot_t){ .req_id = h.req_id, .type = (uint8_t)type, .t_send = now_ns(), .used = true };
     if (area) { s->x = area->x; s->y = area->y; s->w = area->w; s->h = area->h; }
     if (last) { D.last_id = h.req_id; D.last_sent = true; }     /* 응답보다 먼저 세운다 */
     D.outstanding++;
@@ -303,7 +303,7 @@ static void *recv_main(void *arg)
         uint64_t t = now_ns();
         pthread_mutex_lock(&D.mtx);
         slot_t *s = &D.slot[h.req_id % SLOTS];
-        if (h.req_id < D.base_id || !s->used) {     /* 예전 세션의 응답이거나 이미 받은 번호: 버린다 */
+        if (h.req_id < D.base_id || !s->used || s->req_id != h.req_id) { /* 예전 세션의 응답이거나 이미 받은 번호: 버린다 */
             pthread_mutex_unlock(&D.mtx);
             continue;
         }
@@ -317,20 +317,21 @@ static void *recv_main(void *arg)
             break;
         case REQ_SNAPSHOT:
             D.snap_busy = false;
-            if (ok && blen == (size_t)s->w * s->h) {
-                if (D.want_snap) {
+            if (D.want_snap) {
+                D.snap_ok = ok && blen == (size_t)s->w * s->h;
+                if (D.snap_ok) {
                     D.snap_sum = fnv1a(body, blen);
                     D.snap_len = blen;
-                    D.want_snap = false;
-                    D.snap_done = true;
-                    pthread_cond_broadcast(&D.got);
-                } else {
-                    memcpy(D.view, body, blen);
-                    D.sx = s->x; D.sy = s->y; D.sw = s->w; D.sh = s->h;
-                    D.have_view = true;
-                    D.dirty = true;
-                    pthread_cond_signal(&D.redraw);
                 }
+                D.want_snap = false;
+                D.snap_done = true;
+                pthread_cond_broadcast(&D.got);
+            } else if (ok && blen == (size_t)s->w * s->h) {
+                memcpy(D.view, body, blen);
+                D.sx = s->x; D.sy = s->y; D.sw = s->w; D.sh = s->h;
+                D.have_view = true;
+                D.dirty = true;
+                pthread_cond_signal(&D.redraw);
             }
             break;
         case REQ_STATS:
@@ -339,9 +340,14 @@ static void *recv_main(void *arg)
                 memcpy(&st, body, sizeof st);
                 D.n_clients = st.n_clients;
                 D.srv_draw = st.n_draw;
-                if (D.want_stats) { D.want_stats = false; D.stats_done = true; pthread_cond_broadcast(&D.got); }
                 D.dirty = true;
                 pthread_cond_signal(&D.redraw);
+            }
+            if (D.want_stats) {
+                D.stats_ok = ok && blen >= sizeof(stats_resp_t);
+                D.want_stats = false;
+                D.stats_done = true;
+                pthread_cond_broadcast(&D.got);
             }
             break;
         }
@@ -776,8 +782,14 @@ static void *input_cmd_main(void *arg)
         pthread_mutex_unlock(&D.mtx);
         if (gone) break;
         if (sscanf(line, "draw %u %u %u %u %u", &x, &y, &w, &h, &v) == 5) {
-            if (canvas_rect_ok(x, y, w, h) && v < 256) send_draw(x, y, w, h, (uint8_t)v);
-            else printf("error draw %u %u %u %u\n", x, y, w, h);
+            if (canvas_rect_ok(x, y, w, h) && v < 256) {
+                pthread_mutex_lock(&D.mtx);
+                if (D.outstanding >= SLOTS / 2) wait_idle_locked();
+                pthread_mutex_unlock(&D.mtx);
+                send_draw(x, y, w, h, (uint8_t)v);
+            } else {
+                printf("error draw %u %u %u %u\n", x, y, w, h);
+            }
         } else if (strncmp(line, "sync", 4) == 0) {
             pthread_mutex_lock(&D.mtx);
             bool ok = wait_idle_locked();
@@ -788,24 +800,30 @@ static void *input_cmd_main(void *arg)
             if (!canvas_rect_ok(x, y, w, h)) { printf("error snap\n"); fflush(stdout); continue; }
             pthread_mutex_lock(&D.mtx);
             wait_idle_locked();                 /* 앞서 보낸 DRAW 가 반영된 뒤에 받는다 */
-            D.want_snap = true; D.snap_done = false;
+            D.want_snap = true; D.snap_done = false; D.snap_ok = false;
             pthread_mutex_unlock(&D.mtx);
             int sr = send_snapshot(x, y, w, h);
             pthread_mutex_lock(&D.mtx);
             if (sr < 0) { D.want_snap = false; printf("error snap send\n"); }
             while (sr == 0 && !D.snap_done && !D.server_gone) pthread_cond_wait(&D.got, &D.mtx);
-            if (D.snap_done) printf("snap %zu %016llx\n", D.snap_len, (unsigned long long)D.snap_sum);
+            if (D.snap_done) {
+                if (D.snap_ok) printf("snap %zu %016llx\n", D.snap_len, (unsigned long long)D.snap_sum);
+                else printf("error snap resp\n");
+            }
             pthread_mutex_unlock(&D.mtx);
         } else if (strncmp(line, "stats", 5) == 0) {
             pthread_mutex_lock(&D.mtx);
             wait_idle_locked();
-            D.want_stats = true; D.stats_done = false;
+            D.want_stats = true; D.stats_done = false; D.stats_ok = false;
             pthread_mutex_unlock(&D.mtx);
             int sr = send_req(REQ_STATS, NULL, 0, NULL, false);
             pthread_mutex_lock(&D.mtx);
             if (sr < 0) { D.want_stats = false; printf("error stats send\n"); }
             while (sr == 0 && !D.stats_done && !D.server_gone) pthread_cond_wait(&D.got, &D.mtx);
-            if (D.stats_done) printf("stats clients=%u draw=%llu\n", D.n_clients, (unsigned long long)D.srv_draw);
+            if (D.stats_done) {
+                if (D.stats_ok) printf("stats clients=%u draw=%llu\n", D.n_clients, (unsigned long long)D.srv_draw);
+                else printf("error stats resp\n");
+            }
             pthread_mutex_unlock(&D.mtx);
         } else if (sscanf(line, "sleep %d", &ms) == 1) {
             if (ms > 0) sleep_ms(ms);
@@ -860,6 +878,7 @@ static int hello(void)
     memset(&h, 0, sizeof h);
     h.type = REQ_HELLO;
     h.client_id = D.id;
+    h.reserved = D.room;
     h.req_id = atomic_fetch_add(&D.next_id, 1);
     uint64_t want = h.req_id;
     if (tp_send_req(&h, NULL) < 0) return -1;
@@ -903,9 +922,9 @@ int main(int argc, char **argv)
     while ((opt = getopt(argc, argv, "i:k:I:h")) != -1) {
         char *end;
         switch (opt) {
-        case 'i': id = strtol(optarg, &end, 10); if (*end || id < 0 || id >= (long)MAX_CLIENTS) { usage(argv[0]); return 2; } break;
-        case 'k': { long k = strtol(optarg, &end, 10); if (*end || k < 0 || k >= (long)MAX_ROOMS) { usage(argv[0]); return 2; } D.room = (uint32_t)k; break; }
-        case 'I': D.interval_ms = (int)strtol(optarg, &end, 10); if (*end || D.interval_ms < 20 || D.interval_ms > 5000) { usage(argv[0]); return 2; } break;
+        case 'i': id = strtol(optarg, &end, 10); if (end == optarg || *end || id < 0 || id >= (long)MAX_CLIENTS) { usage(argv[0]); return 2; } break;
+        case 'k': { long k = strtol(optarg, &end, 10); if (end == optarg || *end || k < 0 || k >= (long)MAX_ROOMS) { usage(argv[0]); return 2; } D.room = (uint32_t)k; break; }
+        case 'I': D.interval_ms = (int)strtol(optarg, &end, 10); if (end == optarg || *end || D.interval_ms < 20 || D.interval_ms > 5000) { usage(argv[0]); return 2; } break;
         default: usage(argv[0]); return opt == 'h' ? 0 : 2;
         }
     }
@@ -930,7 +949,8 @@ int main(int argc, char **argv)
     D.base_id = ((uint64_t)getpid() << 32) | 1;
     atomic_store(&D.next_id, D.base_id);
     if (hello() < 0) {
-        fprintf(stderr, "draw_%s: HELLO 실패: %s\n", IPC_NAME, err_str(errno, eb, sizeof eb));
+        fprintf(stderr, "draw_%s: HELLO 실패: %s\n", IPC_NAME,
+                errno == EPROTO ? "서버가 거부했다 (없는 방 번호일 수 있다)" : err_str(errno, eb, sizeof eb));
         tp_client_close();
         return 1;
     }
@@ -1012,6 +1032,7 @@ int main(int argc, char **argv)
         memset(&h, 0, sizeof h);
         h.type = REQ_BYE;
         h.client_id = D.id;
+        h.reserved = D.room;
         h.req_id = atomic_fetch_add(&D.next_id, 1);
         tp_send_req(&h, NULL);
     }

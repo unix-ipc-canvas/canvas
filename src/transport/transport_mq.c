@@ -74,6 +74,7 @@
  */
 #define MAX_SHARDS 64u
 #define SHARD_OFF  ((off_t)5120)
+_Static_assert(MAX_CLIENTS + 1 < 5120, "잠금 바이트와 샤드 기록이 겹치면 안 된다");
 #define SHARD_MAGIC 0x4d515332u                    /* "MQS2" */
 typedef struct {
     uint32_t magic;
@@ -320,7 +321,7 @@ static watch_t srv_watch;
 
 /*
  * 여러 조각으로 온 요청을 클라이언트별로 붙이는 자리.
- * DECISION: 클라이언트마다 MAX_PAYLOAD 를 한 번에 잡아 둔다 (16MB). 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
+ * DECISION: 클라이언트마다 MAX_PAYLOAD 를 한 번에 잡아 둔다 (MAX_CLIENTS × 1MB). 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
  *   쓰지 않은 페이지는 실제 메모리를 차지하지 않는다. 응용의 요청은 모두 조각 하나라서 이 자리를 건드리지 않는다.
  */
 static char *srv_asm_buf;
@@ -448,6 +449,7 @@ int tp_server_open(void)
     srv_resp_qs[0] = make_queue(KEY_RESP);
     if (srv_resp_qs[0] < 0) goto fail;
     shard_rec_t rec = { .magic = SHARD_MAGIC, .n = srv_nshard };
+    for (uint32_t i = 0; i < MAX_SHARDS; i++) rec.qid[i] = rec.rqid[i] = -1;
     rec.qid[0] = srv_resp_qs[0];
     for (uint32_t i = 1; i < srv_nshard; i++) {
         if ((srv_resp_qs[i] = msgget(IPC_PRIVATE, IPC_CREAT | 0600)) < 0) goto fail;
@@ -595,9 +597,11 @@ static ssize_t take_one(int qid, frag_t *srv_rbuf, bool pump, msg_hdr_t *hdr, vo
 /* ---- 큐를 나눴을 때(S > 1): 펌프 스레드와 내부 유한 버퍼 ---- */
 
 #define PQ_CAP 4096u
+#define PQ_INL 64u
 static struct {
     msg_hdr_t hdr;
     size_t    len;
+    char      inl[PQ_INL];
     char     *data;
     int       err;              /* 0 이 아니면 요청이 아니라 펌프가 알리는 실패다. tp_recv_req 가 이 errno 로 돌려준다 */
 } pq[PQ_CAP];
@@ -609,7 +613,7 @@ static pthread_t pump_th[MAX_SHARDS];
 static uint32_t n_pumps;
 
 /* 내부 버퍼에 하나 넣는다. 가득 차 있으면 자리가 날 때까지 기다린다. 닫혔으면 false (data 는 부른 쪽이 푼다) */
-static bool pq_put(const msg_hdr_t *h, size_t len, char *data, int err)
+static bool pq_put(const msg_hdr_t *h, size_t len, const char *inl, char *data, int err)
 {
     pthread_mutex_lock(&pq_mtx);
     while (pq_count == PQ_CAP && !pq_closed) pthread_cond_wait(&pq_not_full, &pq_mtx);
@@ -619,6 +623,7 @@ static bool pq_put(const msg_hdr_t *h, size_t len, char *data, int err)
     pq[t].len = len;
     pq[t].data = data;
     pq[t].err = err;
+    if (len > 0 && !data && inl) memcpy(pq[t].inl, inl, len);
     pq_count++;
     pthread_cond_signal(&pq_not_empty);
     pthread_mutex_unlock(&pq_mtx);
@@ -639,7 +644,7 @@ static void *pump_main(void *arg)
     if (!rb || !tmp) {
         free(rb);
         free(tmp);
-        pq_put(&none, 0, NULL, ENOMEM);
+        pq_put(&none, 0, NULL, NULL, ENOMEM);
         return NULL;
     }
     for (;;) {
@@ -648,16 +653,18 @@ static void *pump_main(void *arg)
         if (n < 0) {
             int e = errno;
             if (e == ECANCELED) break;               /* 큐가 지워졌다 = 닫는 중 */
-            if (!pq_put(&none, 0, NULL, e) || e != EMSGSIZE) break;
+            if (!pq_put(&none, 0, NULL, NULL, e) || e != EMSGSIZE) break;
             continue;
         }
         char *copy = NULL;
-        if (n > 0 && !(copy = malloc((size_t)n))) {  /* 요청 하나를 잃는다. 응답을 기다릴 클라이언트를 두고 넘어가지 않는다 */
-            pq_put(&none, 0, NULL, ENOMEM);
-            break;
+        if ((size_t)n > PQ_INL) {
+            if (!(copy = malloc((size_t)n))) {       /* 요청 하나를 잃는다. 응답을 기다릴 클라이언트를 두고 넘어가지 않는다 */
+                pq_put(&none, 0, NULL, NULL, ENOMEM);
+                break;
+            }
+            memcpy(copy, tmp, (size_t)n);
         }
-        if (n > 0) memcpy(copy, tmp, (size_t)n);
-        if (!pq_put(&h, (size_t)n, copy, 0)) { free(copy); break; }
+        if (!pq_put(&h, (size_t)n, copy ? NULL : tmp, copy, 0)) { free(copy); break; }
     }
     free(rb);
     free(tmp);
@@ -706,6 +713,8 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
     size_t len = pq[k].len;
     char *data = pq[k].data;
     int err = pq[k].err;
+    char inl[PQ_INL];
+    if (err == 0 && len > 0 && !data) memcpy(inl, pq[k].inl, len);
     pq_head = (pq_head + 1) % PQ_CAP;
     pq_count--;
     pthread_cond_signal(&pq_not_full);
@@ -715,7 +724,7 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
     if (err) { errno = err; return -1; }             /* 펌프가 알린 실패 (pump_main 설명) */
     ssize_t rc = (ssize_t)len;
     if (len > cap) { errno = EMSGSIZE; rc = -1; }
-    else if (len) memcpy(payload, data, len);
+    else if (len) memcpy(payload, data ? data : inl, len);
     free(data);
     return rc;
 }
@@ -855,7 +864,6 @@ int tp_client_open(uint32_t client_id)
     }
     /* 잠금 파일은 있는데 서버 자리가 비었다 = 서버가 비정상 종료했다 */
     if (byte_locked(cli_lock_fd, LOCK_SERVER) != 1) { errno = ECONNREFUSED; goto fail; }
-
     if (lock_byte(cli_lock_fd, LOCK_CLIENT(client_id)) < 0) {
         if (errno == EAGAIN || errno == EACCES) errno = EADDRINUSE;
         goto fail;

@@ -115,8 +115,8 @@ uint32_t    canvas_tile(const canvas_t *c)      { return c->tile; }
 
 bool canvas_rect_ok(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
-    /* uint32_t 로 더하므로 uint16_t 좌표의 합이 넘치지 않는다 */
-    return w > 0 && h > 0 && x + w <= CANVAS_W && y + h <= CANVAS_H;
+    /* 덧셈 넘침 없이 영역이 캔버스 안에 있는지 검사한다 */
+    return w > 0 && h > 0 && x <= CANVAS_W && w <= CANVAS_W - x && y <= CANVAS_H && h <= CANVAS_H - y;
 }
 
 /* ---- 영역에 걸친 락 ---- */

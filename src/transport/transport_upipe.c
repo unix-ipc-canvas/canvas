@@ -47,10 +47,16 @@
 #define WAKE_TYPE 0u          /* tp_server_wake 가 보내는 머리의 type. 실제 메시지는 1 이상이다 */
 #define DRAIN_BUF 4096
 
+/*
+ * DECISION: 익명 pipe 는 tp_prefork 에서 응답 파이프를 미리 모두 연다. MAX_CLIENTS(256) 개를 한꺼번에 열면
+ *   fd 512 개를 쓰므로, 1단계 벤치마크(클라이언트 1·2·4·8) 전용인 익명 pipe 는 상한을 64 개로 둔다.
+ */
+#define UPIPE_MAX_CLIENTS (MAX_CLIENTS < 64u ? MAX_CLIENTS : 64u)
+
 /* ---- tp_prefork 가 만든 채널. fork 로 물려받는다 ---- */
 
 static int up_req[2] = { -1, -1 };          /* [0] 읽기 끝, [1] 쓰기 끝 */
-static int up_resp[MAX_CLIENTS][2];         /* tp_prefork 가 -1 로 채운 뒤 만든다 */
+static int up_resp[UPIPE_MAX_CLIENTS][2];   /* tp_prefork 가 -1 로 채운 뒤 만든다 */
 static int up_lock = -1;
 static bool up_made;                        /* tp_prefork 를 불렀고 아직 닫지 않았다 */
 
@@ -66,7 +72,7 @@ static void close_all(void)
 {
     close_fd(&up_req[0]);
     close_fd(&up_req[1]);
-    for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    for (uint32_t i = 0; i < UPIPE_MAX_CLIENTS; i++) {
         close_fd(&up_resp[i][0]);
         close_fd(&up_resp[i][1]);
     }
@@ -206,15 +212,15 @@ const char *tp_name(void) { return "upipe"; }
  * fork 전후 (공통 조상)
  * ================================================================ */
 
-/* 요청 pipe, 응답 pipe MAX_CLIENTS 개, 송신 잠금 파일을 만든다. 서버·클라이언트를 fork 하기 전에 한 번 부른다 */
+/* 요청 pipe, 응답 pipe UPIPE_MAX_CLIENTS 개, 송신 잠금 파일을 만든다. 서버·클라이언트를 fork 하기 전에 한 번 부른다 */
 int tp_prefork(void)
 {
     if (up_made) { errno = EALREADY; return -1; }
     up_req[0] = up_req[1] = -1;
-    for (uint32_t i = 0; i < MAX_CLIENTS; i++) up_resp[i][0] = up_resp[i][1] = -1;
+    for (uint32_t i = 0; i < UPIPE_MAX_CLIENTS; i++) up_resp[i][0] = up_resp[i][1] = -1;
 
     if (pipe(up_req) < 0) goto fail;
-    for (uint32_t i = 0; i < MAX_CLIENTS; i++)
+    for (uint32_t i = 0; i < UPIPE_MAX_CLIENTS; i++)
         if (pipe(up_resp[i]) < 0) goto fail;
 
     char path[64];
@@ -243,7 +249,7 @@ void tp_postfork(void)
  * 서버 쪽
  * ================================================================ */
 
-static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
+static pthread_mutex_t srv_resp_mtx[UPIPE_MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static int srv_opened;
 
@@ -254,7 +260,7 @@ int tp_server_open(void)
     ignore_sigpipe();
 
     /* 응답 pipe 의 읽기 끝은 클라이언트 몫이다. 서버가 쥐고 있으면 클라이언트가 끝나도 EPIPE 가 나지 않는다 */
-    for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    for (uint32_t i = 0; i < UPIPE_MAX_CLIENTS; i++) {
         close_fd(&up_resp[i][0]);
         pthread_mutex_init(&srv_resp_mtx[i], NULL);
     }
@@ -276,7 +282,7 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
 int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
 {
     uint32_t id = hdr->client_id;
-    if (id >= MAX_CLIENTS) { errno = EINVAL; return -1; }
+    if (id >= UPIPE_MAX_CLIENTS) { errno = EINVAL; return -1; }
 
     int rc = -1;
     pthread_mutex_lock(&srv_resp_mtx[id]);
@@ -323,7 +329,7 @@ void tp_server_wake(void)
 void tp_server_close(void)
 {
     if (!srv_opened) return;
-    for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    for (uint32_t i = 0; i < UPIPE_MAX_CLIENTS; i++) {
         pthread_mutex_lock(&srv_resp_mtx[i]);
         close_fd(&up_resp[i][1]);
         pthread_mutex_unlock(&srv_resp_mtx[i]);
@@ -348,12 +354,12 @@ static int cli_opened;
  */
 int tp_client_open(uint32_t client_id)
 {
-    if (client_id >= MAX_CLIENTS) { errno = EINVAL; return -1; }
+    if (client_id >= UPIPE_MAX_CLIENTS) { errno = EINVAL; return -1; }
     if (!up_made || up_resp[client_id][0] < 0) { errno = ENOTCONN; return -1; }
     ignore_sigpipe();
 
     close_fd(&up_req[0]);                /* 요청 pipe 의 읽기 끝: 서버 몫 */
-    for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+    for (uint32_t i = 0; i < UPIPE_MAX_CLIENTS; i++) {
         close_fd(&up_resp[i][1]);        /* 응답 pipe 의 쓰기 끝: 서버 몫 */
         if (i != client_id) close_fd(&up_resp[i][0]);
     }
