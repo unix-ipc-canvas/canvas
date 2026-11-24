@@ -9,10 +9,10 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
    - IPC 한도(기본값): msgmax 8192, msgmnb 16384, PIPE_BUF 4096, pipe 버퍼 65536
 
 2. 컴파일
-   make            전체 (1단계 벤치마크 + 2단계 응용, 3가지 IPC)
+   make            전체 (1단계 벤치마크 + 2단계 응용 + 검증기, 3가지 IPC + 익명 pipe upipe)
    make bench      1단계 벤치마크만
-   make app        2단계 응용만
-   make pipe       pipe 버전만 (mq, shm 도 같음)
+   make app        2단계 응용(서버·클라이언트·draw)과 검증기(verify)
+   make pipe       pipe 버전만 (mq, shm 도 같음. upipe 는 벤치마크만, 최대 64클라이언트)
    make test       검증 스크립트 실행 (PASS / FAIL / SKIP 출력)
 
 3. 실행
@@ -26,6 +26,7 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
      -w N   워커 수 1~64 (4)
      -l S   락 방식 global, tile, tile-rw, none (global). none 은 경쟁 상태 시연용이다
      -t N   타일 한 변, 16~1024 의 2의 거듭제곱 (64). tile, tile-rw 에서만 쓴다
+     -K N   그림판(방) 수 1~64 (1). 방마다 캔버스와 락이 따로이며 PGM 은 방 0 만 저장한다
      -d     작업 큐와 워커 없이 수신 스레드가 직접 처리한다 (큐 비용 확인용)
      -p F   끝날 때 저장할 PGM 경로 (canvas_<ipc>.pgm)
      -O F   끝날 때 서버 자원 사용량을 CSV F 에 한 줄 덧붙인다. -e 실험, -R 반복, -C 커밋은 그 줄의 칸 (측정 스크립트용)
@@ -34,9 +35,9 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
      shm:  OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS (링의 칸 크기와 요청 링·응답 링의 칸 수)
            OSP_SHM_REQ_RING=per (요청 링을 클라이언트마다 따로 둔다. 기본 shared 는 링 하나를 함께 쓴다)
      mq:   OSP_MQ_QUEUES=S (요청·응답 큐를 S쌍으로 나눈다, 1~64. 클라이언트 수백 개 이상일 때)
-   그림판 여러 개: 서버 -K 방수(1~64), 클라이언트·그리기 클라이언트 -k 방번호. 클라이언트는 최대 1024개
-   대규모 시험: scripts/scale-test.sh <ipc> 1024 16  (클라이언트 1024개, 그림판 16개)
-   클라이언트 주요 옵션: -i 번호 -n 요청수 -m DRAW비율 -f 동시요청수
+   그림판 여러 개: 서버 -K 방수(1~64), 클라이언트·그리기 클라이언트 -k 방번호, 검증기 -K 방수. 클라이언트는 최대 256개
+   대규모 시험: scripts/scale-test.sh <ipc> 256 16  (클라이언트 256개, 그림판 16개)
+   클라이언트 주요 옵션: -i 번호(0~255) -k 방번호 -n 요청수 -m DRAW비율 -f 동시요청수
    사람이 직접 그리기: 서버를 띄운 뒤 터미널마다 ./bin/draw_shm (pipe, mq 도 같음). 여러 명이 동시에 그린다.
      마우스 왼쪽 끌기=그리기, 1~9=색, b/r=붓/사각형, [ ]=붓 크기, 휠·+/-/0=확대, 방향키=이동, q=끝
    클라이언트, 검증기, 벤치마크(bench_*)의 모든 옵션과 기본값은 -h 로 본다. 예: ./bin/client_shm -h
@@ -55,6 +56,7 @@ UNIX시스템프로그래밍 설계과제 - 공유 캔버스 서버
      python3 scripts/plot-app.py                그래프와 요약표 -> docs/assets/app/
      scripts/exp-stage2.sh                      원인 확인 실험(약 10분) -> results/exp-app-*/
 
-5. IPC 자원 확인
+5. IPC 자원 확인 및 부록
    실행 종료 후 ipcs 로 남은 자원이 없는지 확인한다.
-   비정상 종료로 남았으면 make ipcclean
+   비정상 종료로 남았으면 make ipcclean (OSP_MQ_QUEUES > 1 의 IPC_PRIVATE 큐도 잠금 파일에서 읽어 함께 지운다).
+   AI 활용 기록과 주요 대화 기록은 docs/records/ai-log.md, docs/records/ai-chats/ 에 포함되어 있다.
