@@ -35,10 +35,14 @@
  *   환경 변수 OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS 로 서버를 띄울 때 바꿀 수 있다 (메모리 실험용).
  *
  * 클라이언트별 요청 링 (실험용, 서버 환경 변수 OSP_SHM_REQ_RING=per. 기본은 shared = 위의 링 하나)
- *   요청 링을 클라이언트마다 하나씩 MAX_CLIENTS 개 둔다. 링마다 MUTEX, FREE 는 그대로이고 MSGS 는 쓰지 않는다.
- *   대신 집합 끝에 모든 요청 링의 메시지 수 TOTAL 세마포어 하나를 둔다. 보내는 쪽은 자기 링에 쓰고 TOTAL 에 +1,
+ *   요청 링을 클라이언트마다 하나씩 MAX_CLIENTS 개 둔다. 링마다 MUTEX, FREE 는 그대로다.
+ *   집합 끝에 모든 요청 링의 메시지 수 TOTAL 세마포어 하나를 둔다. 보내는 쪽은 자기 링에 쓰고 TOTAL 에 +1,
  *   서버 수신 스레드는 TOTAL 에서 -1 한 뒤 링들을 돌아가며(round-robin) 보고 head != tail 인 링에서 하나 꺼낸다.
  *   보내는 쪽은 head 를 먼저 바꾸고 TOTAL 을 올리므로, TOTAL 을 하나 얻었으면 head 가 앞선 링이 적어도 하나 있다.
+ *   링마다 MSGS 자리(S_SLOTS)는 그 링에 띄워 둘 수 있는 메시지 수로 쓴다(PER_RING_MSGS 에서 시작). 보내는 쪽은
+ *   빈 칸, 메시지 자리, MUTEX 를 한 번에 얻고, 서버가 꺼낸 뒤 빈 칸과 메시지 자리를 함께 돌려준다. 세마포어 값은
+ *   SEMVMX(32767)를 넘으면 ERANGE 로 실패한다. 작은 요청은 칸 하나라 링 하나에 257개까지 들어가므로 이 한도가 없으면
+ *   클라이언트 128개 남짓에서 TOTAL 이 넘친다(클라이언트 160개 × 동시 요청 257개에서 확인).
  *   클라이언트들이 MUTEX 하나를 두고 다투지 않는 대신, 링이 클라이언트 수만큼 늘어 메모리가 커진다.
  *   기본 칸 수는 가장 큰 메시지 하나(머리 + MAX_PAYLOAD)이다. 서버가 요청 영역 머리에 방식을 적고 클라이언트가 따른다.
  */
@@ -76,6 +80,7 @@
 #define LOCK_CLIENT(id)  ((off_t)(id) + 1)
 
 enum { S_MUTEX = 0, S_FREE = 1, S_MSGS = 2, S_PER_RING = 3 };    /* 링 하나의 세마포어 순서 */
+#define S_SLOTS S_MSGS                      /* 클라이언트별 요청 링에서는 MSGS 자리를 띄워 둘 수 있는 메시지 수로 쓴다 */
 
 #define SHM_READY      0x53484d32u          /* "SHM2". 서버가 모두 만든 뒤 요청 영역 머리에 쓴다 */
 #define MSG_MAX        (sizeof(msg_hdr_t) + (size_t)MAX_PAYLOAD)
@@ -83,6 +88,12 @@ enum { S_MUTEX = 0, S_FREE = 1, S_MSGS = 2, S_PER_RING = 3 };    /* 링 하나�
 #define DEF_REQ_MSGS   4u
 #define DEF_RESP_MSGS  2u
 #define SEM_MAX_VALUE  32767u               /* SEMVMX. FREE 의 최댓값 = 칸 수의 한도 */
+/*
+ * 클라이언트별 요청 링 하나에 띄워 둘 수 있는 메시지 수. TOTAL 은 링 MAX_CLIENTS 개의 메시지 수 합과
+ * 깨우기(tp_server_wake, 한 번)를 센다. 그 합이 SEM_MAX_VALUE 를 넘지 않게 한다 (1024개면 31).
+ */
+#define PER_RING_MSGS  ((SEM_MAX_VALUE - 1u) / MAX_CLIENTS)
+_Static_assert(PER_RING_MSGS >= 1, "클라이언트별 요청 링은 메시지를 하나 이상 담아야 한다. MAX_CLIENTS 가 너무 크다");
 
 /* 요청 영역의 맨 앞. 64B */
 typedef struct {
@@ -110,6 +121,7 @@ typedef struct {
     int            semid;
     unsigned short base;    /* 집합 안에서 이 링의 첫 세마포어 번호 */
     unsigned short msgs;    /* 보낸 뒤 +1 할 세마포어. 보통은 base + S_MSGS, 클라이언트별 요청 링은 TOTAL */
+    bool           slots;   /* 클라이언트별 요청 링이다. 보낼 때 메시지 자리(base + S_SLOTS)도 얻는다 */
     uint32_t       chunk;
     uint32_t       nchunks;
 } ring_t;
@@ -152,6 +164,14 @@ static void ring_bind(ring_t *r, char *base, uint32_t chunk, uint32_t nchunks, i
     r->semid = semid;
     r->base = sem_base;
     r->msgs = (unsigned short)(sem_base + S_MSGS);
+    r->slots = false;
+}
+
+/* 클라이언트별 요청 링으로 만든다: 보낸 뒤 TOTAL 을 올리고, 띄워 둘 메시지 수를 메시지 자리로 제한한다 */
+static void ring_per_client(ring_t *r, unsigned short total)
+{
+    r->msgs = total;
+    r->slots = true;
 }
 
 static size_t ring_bytes(const ring_t *r) { return (size_t)r->nchunks * r->chunk; }
@@ -215,18 +235,21 @@ static int ring_send(const ring_t *r, const msg_hdr_t *hdr, const void *payload,
     if (k > r->nchunks) { errno = EMSGSIZE; return -1; }
 
     /*
-     * 빈 칸과 MUTEX 를 한 번에 얻는다. 둘 다 SEM_UNDO 라서 복사하다 죽어도 커널이 되돌린다.
-     * 다 쓴 뒤의 semop 에서 FREE 에 +k(SEM_UNDO), -k 를 함께 하면 값은 그대로이고 되돌리기 기록만 지워진다.
+     * 빈 칸과 MUTEX 를 한 번에 얻는다(클라이언트별 요청 링은 메시지 자리도). 모두 SEM_UNDO 라서 복사하다 죽어도 커널이 되돌린다.
+     * 다 쓴 뒤의 semop 에서 FREE 에 +k(SEM_UNDO), -k 를 함께 하면 값은 그대로이고 되돌리기 기록만 지워진다(메시지 자리도 같다).
+     * MUTEX 는 배열의 맨 끝에 둔다. 동기화 시연용 빌드는 그것만 빼고 부른다.
      */
-    struct sembuf acq[2] = {
+    struct sembuf acq[3] = {
         { (unsigned short)(r->base + S_FREE),  (short)-(int)k, SEM_UNDO },
+        { (unsigned short)(r->base + S_SLOTS), -1,             SEM_UNDO },
         { (unsigned short)(r->base + S_MUTEX), -1,             SEM_UNDO },
     };
+    size_t na = 3;
+    if (!r->slots) { acq[1] = acq[2]; na = 2; }
 #ifdef DEMO_NO_SHM_MUTEX                /* 동기화 시연용 빌드(scripts/race-demo.sh)에서만: MUTEX 없이 빈 칸만 얻는다 */
-    if (sem_ops(r->semid, acq, 1, w) < 0) return -1;
-#else
-    if (sem_ops(r->semid, acq, 2, w) < 0) return -1;
+    na--;
 #endif
+    if (sem_ops(r->semid, acq, na, w) < 0) return -1;
 
     /*
      * head 는 MUTEX(세마포어)가 보호한다. 원자적 읽기·쓰기(acquire/release)로 둔 것은 그 순서를 C 메모리 모델로도
@@ -239,17 +262,20 @@ static int ring_send(const ring_t *r, const msg_hdr_t *hdr, const void *payload,
     if (hdr->payload_len) copy_in(r, off + sizeof *hdr, payload, hdr->payload_len);
     __atomic_store_n(&r->hdr->head, head + k, __ATOMIC_RELEASE);
 
-    struct sembuf pub[4] = {
+    struct sembuf pub[6] = {
         { r->msgs,                             1,              0 },
         { (unsigned short)(r->base + S_FREE),  (short)k,       SEM_UNDO },
         { (unsigned short)(r->base + S_FREE),  (short)-(int)k, 0 },
+        { (unsigned short)(r->base + S_SLOTS), 1,              SEM_UNDO },
+        { (unsigned short)(r->base + S_SLOTS), -1,             0 },
         { (unsigned short)(r->base + S_MUTEX), 1,              SEM_UNDO },
     };
+    size_t np = 6;
+    if (!r->slots) { pub[3] = pub[5]; np = 4; }
 #ifdef DEMO_NO_SHM_MUTEX
-    return sem_ops(r->semid, pub, 3, NULL);
-#else
-    return sem_ops(r->semid, pub, 4, NULL);
+    np--;
 #endif
+    return sem_ops(r->semid, pub, np, NULL);
 }
 
 /*
@@ -268,8 +294,11 @@ static ssize_t ring_take(const ring_t *r, msg_hdr_t *hdr, void *payload, size_t 
     if (fits && len) copy_out(r, off + sizeof *hdr, payload, len);
     __atomic_store_n(&r->hdr->tail, tail + k, __ATOMIC_RELEASE);
 
-    struct sembuf rel = { (unsigned short)(r->base + S_FREE), (short)k, 0 };
-    if (sem_ops(r->semid, &rel, 1, NULL) < 0) return -1;
+    struct sembuf rel[2] = {                /* 빈 칸과 (클라이언트별 요청 링이면) 메시지 자리를 돌려준다 */
+        { (unsigned short)(r->base + S_FREE),  (short)k, 0 },
+        { (unsigned short)(r->base + S_SLOTS), 1,        0 },
+    };
+    if (sem_ops(r->semid, rel, r->slots ? 2 : 1, NULL) < 0) return -1;
     if (!fits) { errno = EMSGSIZE; return -1; }
     return (ssize_t)len;
 }
@@ -399,8 +428,11 @@ static void remove_stale(void)
     }
 }
 
-/* 링 nrings 개의 세마포어 집합을 만든다. 링마다 MUTEX 1, FREE nchunks, MSGS 0. 끝에 0 으로 시작하는 세마포어 extra 개 */
-static int make_sem(key_t key, unsigned nrings, uint32_t nchunks, unsigned extra)
+/*
+ * 링 nrings 개의 세마포어 집합을 만든다. 링마다 MUTEX 1, FREE nchunks, MSGS msgs0
+ * (보통 0, 클라이언트별 요청 링은 메시지 자리 PER_RING_MSGS). 끝에 0 으로 시작하는 세마포어 extra 개
+ */
+static int make_sem(key_t key, unsigned nrings, uint32_t nchunks, unsigned short msgs0, unsigned extra)
 {
     unsigned n = nrings * S_PER_RING + extra;
     int id = semget(key, (int)n, IPC_CREAT | IPC_EXCL | 0600);
@@ -410,7 +442,7 @@ static int make_sem(key_t key, unsigned nrings, uint32_t nchunks, unsigned extra
     for (unsigned i = 0; i < nrings; i++) {
         vals[i * S_PER_RING + S_MUTEX] = 1;
         vals[i * S_PER_RING + S_FREE] = (unsigned short)nchunks;
-        vals[i * S_PER_RING + S_MSGS] = 0;
+        vals[i * S_PER_RING + S_MSGS] = msgs0;
     }
     union semun arg = { .array = vals };
     int rc = semctl(id, 0, SETALL, arg);
@@ -464,9 +496,10 @@ int tp_server_open(void)
 
     srv_nreq = req_rings(&g);
     srv_rr = 0;
-    srv_req_sem = make_sem(KEY_REQ_SEM, srv_nreq, g.req_chunks, g.req_mode == REQ_PER_CLIENT ? 1 : 0);
+    bool per = g.req_mode == REQ_PER_CLIENT;
+    srv_req_sem = make_sem(KEY_REQ_SEM, srv_nreq, g.req_chunks, per ? PER_RING_MSGS : 0, per ? 1 : 0);
     if (srv_req_sem < 0) goto fail;
-    srv_resp_sem = make_sem(KEY_RESP_SEM, MAX_CLIENTS, g.resp_chunks, 0);
+    srv_resp_sem = make_sem(KEY_RESP_SEM, MAX_CLIENTS, g.resp_chunks, 0, 0);
     if (srv_resp_sem < 0) goto fail;
     srv_req_base = make_shm(KEY_REQ_SHM, req_seg_size(&g), &srv_req_shm);
     if (!srv_req_base) goto fail;
@@ -476,7 +509,7 @@ int tp_server_open(void)
     for (uint32_t i = 0; i < srv_nreq; i++) {
         ring_bind(&srv_req[i], srv_req_base + sizeof(seg_hdr_t) + (size_t)i * req_stride(&g), g.chunk, g.req_chunks,
                   srv_req_sem, (unsigned short)(i * S_PER_RING));
-        if (g.req_mode == REQ_PER_CLIENT) srv_req[i].msgs = total_sem();
+        if (per) ring_per_client(&srv_req[i], total_sem());
     }
     for (uint32_t i = 0; i < MAX_CLIENTS; i++)
         ring_bind(&srv_resp[i], srv_resp_base + (size_t)i * resp_stride(&g), g.chunk, g.resp_chunks,
@@ -716,10 +749,10 @@ int tp_client_open(uint32_t client_id)
         goto fail;
     }
 
-    if (g.req_mode == REQ_PER_CLIENT) {         /* 내 요청 링. 보낸 뒤에는 TOTAL 을 올린다 */
+    if (g.req_mode == REQ_PER_CLIENT) {         /* 내 요청 링. 메시지 자리를 얻어 쓰고, 보낸 뒤에는 TOTAL 을 올린다 */
         ring_bind(&cli_req, cli_req_base + sizeof(seg_hdr_t) + (size_t)client_id * req_stride(&g), g.chunk, g.req_chunks,
                   cli_req_sem, (unsigned short)(client_id * S_PER_RING));
-        cli_req.msgs = total_sem();
+        ring_per_client(&cli_req, total_sem());
     } else {
         ring_bind(&cli_req, cli_req_base + sizeof(seg_hdr_t), g.chunk, g.req_chunks, cli_req_sem, 0);
     }
