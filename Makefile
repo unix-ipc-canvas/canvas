@@ -91,8 +91,23 @@ test:
 	@./scripts/verify.sh
 
 # 비정상 종료로 남은 자원 치우기. 정상 종료 때는 프로그램이 직접 지워야 한다.
+# mq 큐 나누기(OSP_MQ_QUEUES)의 key 없는 큐는 key 로 찾을 수 없어, 잠금 파일을 지우기 전에 그 안의 기록을 읽어 지운다.
+# 기록: MQ_REC_OFF 바이트부터 4바이트 정수 130개 = magic(0x4d515332), 쌍 수 n, 응답 큐 64개, 요청 큐 64개.
+# 1 .. n-1 번 쌍만 key 없는 큐다 (src/transport/transport_mq.c 의 SHARD_OFF, shard_rec_t 와 같아야 한다)
+MQ_REC_OFF := 5120
 ipcclean:
-	@for y in 0 1 2 3 4 5 6 7 8 9; do \
+	@f=/tmp/osproject_$(TEAM_NO)_mq.lock; \
+	if [ -f "$$f" ]; then \
+	  set -- $$(od -An -v -t d4 -j $(MQ_REC_OFF) -N 520 "$$f" 2>/dev/null); \
+	  if [ $$# -eq 130 ] && [ "$$1" = 1297175346 ]; then \
+	    n=$$2; shift 2; k=0; \
+	    for q in "$$@"; do \
+	      s=$$((k % 64)); k=$$((k + 1)); \
+	      if [ $$s -ge 1 ] && [ $$s -lt $$n ]; then ipcrm -q $$q 2>/dev/null; fi; \
+	    done; \
+	  fi; \
+	fi; \
+	for y in 0 1 2 3 4 5 6 7 8 9; do \
 	  k=$$((60000 + $(TEAM_NO) * 10 + y)); \
 	  ipcrm -Q $$k 2>/dev/null; ipcrm -M $$k 2>/dev/null; ipcrm -S $$k 2>/dev/null; \
 	done; rm -f /tmp/osproject_$(TEAM_NO)_*; echo "정리 완료. 확인: ipcs"
