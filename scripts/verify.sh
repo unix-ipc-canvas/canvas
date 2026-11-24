@@ -31,6 +31,9 @@ leftover() {
     ls /tmp/osproject_"${TEAM_NO}"_* 2>/dev/null | tr '\n' ' '
 }
 
+# key 없는(IPC_PRIVATE) 메시지 큐 번호. mq 큐 나누기(OSP_MQ_QUEUES)의 큐는 key 가 없어 leftover 로는 보이지 않는다
+private_queues() { ipcs -q 2>/dev/null | awk '$1 == "0x00000000" { print $2 }' | sort; }
+
 # T-00 문서 검사: 링크, 요구사항과 테스트의 대응, 예측 선행. docs/ 가 없으면(제출용 tar) SKIP
 python3 scripts/check-docs.py >"$log" 2>&1
 case $? in
@@ -193,7 +196,7 @@ run_clients() {
 
 srv_sum() { grep '^checksum' "$W/srv.out"; }
 
-RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-23 T-24 T-30 T-31"
+RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-23 T-24 T-25 T-26 T-30 T-31"
 app_have=""
 for i in pipe mq shm; do
     [ -x "bin/server_$i" ] && [ -x "bin/client_$i" ] && [ -x "bin/apptest_$i" ] && app_have="$app_have $i"
@@ -409,6 +412,47 @@ else
             ok T-24 "$(tail -1 "$log" | sed 's/^ok *//') ${sev:+($sev)}"
         else
             ng T-24 "$(tail -1 "$log") ${sev:+($sev)}"; tail -5 "$log"; make -s ipcclean >/dev/null 2>&1
+        fi
+
+        # T-25 서버를 2초 멈춘 동안 클라이언트 160개가 동시 요청 257개씩 쌓아도 모두 끝나고 체크섬 = 검증기.
+        # shm 클라이언트별 요청 링에서는 쌓이는 메시지 수의 합이 세마포어 한도(32767)를 넘을 만큼이다(T-24 와 같은 환경)
+        for kv in $sev; do export "$kv"; done
+        srv_start "$i" -l tile -w 8
+        for kv in $sev; do unset "${kv%%=*}"; done
+        pids=""
+        for ((c = 0; c < 160; c++)); do
+            tmo 60 "bin/client_$i" -i "$c" -n 300 -w 0 -f 257 >"$W/b$c.out" 2>&1 &
+            pids="$pids $!"
+        done
+        sleep 1
+        kill -STOP "$SP"; sleep 2; kill -CONT "$SP"
+        cf=0; first=""; c=0
+        for p in $pids; do
+            if ! wait "$p"; then cf=$((cf + 1)); [ -z "$first" ] && first=$c; fi
+            c=$((c + 1))
+        done
+        srv_stop; rc=$?
+        want=$(bin/verify -c 160 -n 300 2>/dev/null)
+        if [ "$cf" = 0 ] && [ "$rc" = 0 ] && [ "$(srv_sum)" = "$want" ]; then
+            ok T-25 "$i: 서버를 2초 멈춘 동안 클라이언트 160개 × 동시 요청 257개가 쌓여도 모두 끝나고 체크섬 같음 ${sev:+($sev)}"
+        else
+            ng T-25 "$i: 클라이언트 실패 $cf, 서버 $rc, $(srv_sum) / $want ${sev:+($sev)}"
+            [ -n "$first" ] && tail -2 "$W/b$first.out"
+        fi
+
+        # T-26 kill -9 로 죽은 서버가 남긴 자원을 make ipcclean 이 모두 지운다. mq 는 큐를 나눈 서버의 key 없는 큐까지
+        pq0=$(private_queues)
+        [ "$i" = mq ] && export OSP_MQ_QUEUES=4
+        srv_start "$i"; st=$?
+        unset OSP_MQ_QUEUES
+        kill -9 "$SP" 2>/dev/null; wait "$SP" 2>/dev/null; SP=""
+        lo0=$(leftover); pqn=$(comm -13 <(echo "$pq0") <(private_queues) | grep -c .)
+        make -s ipcclean >/dev/null 2>&1
+        lo=$(leftover); pql=$(comm -13 <(echo "$pq0") <(private_queues) | grep -c .)
+        if [ "$st" = 0 ] && [ -n "$lo0" ] && [ -z "$lo" ] && [ "$pql" = 0 ]; then
+            ok T-26 "$i: kill -9 뒤 남은 자원 $(echo $lo0 | wc -w)개, key 없는 큐 ${pqn}개 → make ipcclean 뒤 모두 없음"
+        else
+            ng T-26 "$i: 서버 시작 $st, kill -9 뒤 [$lo0] key 없는 큐 ${pqn}개 → ipcclean 뒤 [$lo] key 없는 큐 ${pql}개"
         fi
     done
 

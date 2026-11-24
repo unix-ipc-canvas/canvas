@@ -22,7 +22,11 @@ CSV=${CSV:-}; EXP=${EXP:-scale}; RUN=${RUN:-1}
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 [ -x "$B/server_$ipc" ] || { echo "$B/server_$ipc 가 없다 (make)" >&2; exit 2; }
-if ls /tmp/osproject_2_* >/dev/null 2>&1; then echo "우리 서버나 남은 파일이 있다(/tmp/osproject_2_*)" >&2; exit 2; fi
+TEAM_NO=$(sed -n 's/^TEAM_NO ?= *//p' Makefile)
+KEYS=$(for y in 0 1 2 3 4 5 6 7 8 9; do printf '0x%08x|' $((60000 + TEAM_NO * 10 + y)); done); KEYS=${KEYS%|}
+if ls /tmp/osproject_"$TEAM_NO"_* >/dev/null 2>&1; then echo "우리 서버나 남은 파일이 있다(/tmp/osproject_${TEAM_NO}_*)" >&2; exit 2; fi
+# key 없는(IPC_PRIVATE) 큐 수. mq 큐 나누기의 큐는 key 가 없어, 끝난 뒤 이 수가 늘었으면 남은 자원으로 센다
+pq0=$(ipcs -q 2>/dev/null | grep -c '^0x00000000 ')
 
 sopt=(); copt=(); warm=0
 if [ -n "$CSV" ]; then
@@ -68,7 +72,8 @@ cpu=$(grep -o "CPU 사용자 [0-9.]*s, 커널 [0-9.]*s" "$W/srv.log" | tail -1)
 hwm=$(grep -o 'VmHWM [0-9]* kB' "$W/srv.log" | tail -1)
 cnt=$(grep -oE 'DRAW [0-9]+, SNAPSHOT [0-9]+, 오류 응답 [0-9]+' "$W/srv.log" | tail -1)
 sleep 0.3
-left=$(ipcs 2>/dev/null | grep -c '0x0000ea7[4-9a-d]'); left=$((left + $(ls /tmp/osproject_2_* 2>/dev/null | wc -l)))
+left=$(ipcs 2>/dev/null | grep -ciE "^($KEYS) "); left=$((left + $(ls /tmp/osproject_"$TEAM_NO"_* 2>/dev/null | wc -l)))
+pq1=$(ipcs -q 2>/dev/null | grep -c '^0x00000000 '); [ "$pq1" -gt "$pq0" ] && left=$((left + pq1 - pq0))
 if [ "$done_n" = "$N" ] && [ "$src" = 0 ] && [ "$got" = "$want" ] && [ "$left" = 0 ]; then r=ok; else r=ng; fi
 if [ "$r" = ng ]; then
     tail -3 "$W/srv.log"

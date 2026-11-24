@@ -26,9 +26,20 @@
  *   수신   응답을 받는다. SNAPSHOT 응답은 보기 버퍼에 넣고 다시 그리라고 알린다
  *   갱신   주기마다 보이는 영역의 SNAPSHOT 과 1초마다 STATS 를 보낸다 (SNAPSHOT 은 한 번에 하나만 띄운다)
  *   화면   다시 그리라는 알림을 받으면 화면 전체를 한 번의 write 로 그린다
- *   신호   SIGINT·SIGTERM(끝내기), SIGWINCH(터미널 크기 바뀜)을 sigwait 로 받는다
+ *   신호   SIGINT·SIGTERM(끝내기. 끝내는 중에 또 받으면 바로 끝내기), SIGWINCH(터미널 크기 바뀜)을 sigwait 로 받는다
  *   main   접속, 스레드 시작과 정리
  * 공유 상태(보기 버퍼, 화면 상태, 통계)는 mutex 하나로 보호하고, 다시 그리기와 응답 대기는 조건변수로 알린다.
+ *
+ * 끝내기: 갱신 스레드(-I 주기 + QUIT_WAIT_SEC), 띄운 요청의 응답, 마지막 STATS 의 응답을 차례로 QUIT_WAIT_SEC 까지만
+ *   기다린다. 서버가 멈춰 있으면(kill -STOP, 서버 터미널의 Ctrl+Z) 응답이 오지 않기 때문이다.
+ * DECISION: 그 안에 끝나지 않거나 끝내는 중에 SIGINT·SIGTERM 을 또 받으면, 남은 스레드를 거두지 않은 채 tp_client_close 를
+ *   부르고 _exit(1) 한다(quit_now). 막힌 tp_recv_resp 를 깨우는 함수가 transport.h 에 없어서다. "송수신 스레드가 빠져나온
+ *   뒤에 닫는다"는 약속을 어기지만 프로세스가 곧바로 끝나므로 닫은 자원을 다시 쓰지 않는다(client.c 의 두 번째 신호와 같은 판단).
+ *   그래서 이 경로에서는 ThreadSanitizer 가 pipe·mq 버전의 닫기(fd 닫기, 버퍼 해제)와 막힌 tp_recv_resp 사이의 경쟁을,
+ *   shm 버전은 거두지 않은 수신 스레드(thread leak)를 보고한다. 정상 종료 경로에서는 보고가 없다.
+ * DECISION: 명령 줄 모드에서 입력을 기다리는 중에 신호로 끝낼 때는 입력 스레드를 거두지 않는다(fgets 를 깨울 수 없다).
+ *   화면 모드의 입력 스레드처럼 프로세스가 끝날 때 함께 정리된다. 다만 그 스레드는 fgets 안에서 stdin 잠금을 쥐고 있고,
+ *   glibc 의 exit 는 stdio 스트림 잠금을 모두 잡은 뒤 비우므로 main 에서 돌아가면 멈춘다. 그때는 stdout 을 비우고 _exit 한다.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -55,6 +66,7 @@
 static const char *IPC_NAME = "?";       /* 실행 파일 이름(draw_shm)에서 정한다 */
 
 #define SLOTS 4096u                     /* 띄워 둔 요청 기록 (req_id % SLOTS) */
+#define QUIT_WAIT_SEC 3                 /* 끝낼 때 단계마다 기다리는 시간 (맨 위의 끝내기) */
 #define TOP 1                           /* 화면 위 상태 줄 수 */
 #define BOTTOM 1                        /* 화면 아래 도움말 줄 수 */
 
@@ -78,10 +90,12 @@ static struct {
     /* 아래는 mtx 로 보호한다 */
     pthread_mutex_t mtx;
     pthread_cond_t redraw;              /* 화면 스레드를 깨운다 */
-    pthread_cond_t idle;                /* 띄운 요청이 0 이 되었다 */
+    pthread_cond_t idle;                /* 띄운 요청이 0 이 되었다, 스레드가 끝났다, 끝내는 중에 신호를 또 받았다 */
     slot_t slot[SLOTS];
     uint64_t outstanding;
     bool quit, dirty, server_gone;
+    bool abort;                         /* 끝내는 중에 신호를 또 받았다. 기다리지 않고 끝낸다 */
+    bool recv_done, ref_done, in_done;  /* 수신·갱신·입력 스레드가 끝났다 */
     uint64_t last_id;                   /* 마지막 STATS 의 req_id. 이 응답을 받으면 수신 스레드가 끝난다 */
     bool last_sent;
 
@@ -277,6 +291,7 @@ static void *recv_main(void *arg)
             pthread_mutex_lock(&D.mtx);
             D.server_gone = true;
             D.quit = true;
+            D.recv_done = true;
             D.outstanding = 0;
             snprintf(D.note, sizeof D.note, "서버가 끝났다");
             pthread_cond_broadcast(&D.redraw);
@@ -334,6 +349,7 @@ static void *recv_main(void *arg)
         D.outstanding--;
         if (D.outstanding == 0) pthread_cond_broadcast(&D.idle);
         bool last = D.last_sent && h.req_id == D.last_id;
+        if (last) { D.recv_done = true; pthread_cond_broadcast(&D.idle); }
         pthread_mutex_unlock(&D.mtx);
         if (last) return NULL;
     }
@@ -353,7 +369,12 @@ static void *refresh_main(void *arg)
     uint64_t last_stats = 0;
     for (;;) {
         pthread_mutex_lock(&D.mtx);
-        if (D.quit) { pthread_mutex_unlock(&D.mtx); return NULL; }
+        if (D.quit) {
+            D.ref_done = true;
+            pthread_cond_broadcast(&D.idle);
+            pthread_mutex_unlock(&D.mtx);
+            return NULL;
+        }
         uint32_t x, y, w, h;
         view_rect(&x, &y, &w, &h);
         bool snap = !D.snap_busy;
@@ -531,9 +552,11 @@ static void *signal_main(void *arg)
             continue;
         }
         if (sig == SIGUSR1) { pthread_mutex_unlock(&D.mtx); return NULL; }   /* main 이 끝내라고 보냄 */
+        if (D.quit) D.abort = true;     /* 끝내는 중에 또 받았다: 남은 응답을 기다리지 않고 끝낸다 (맨 위의 DECISION) */
         D.quit = true;
         pthread_cond_broadcast(&D.redraw);
         pthread_cond_broadcast(&D.got);
+        pthread_cond_broadcast(&D.idle);
         pthread_mutex_unlock(&D.mtx);
     }
 }
@@ -795,9 +818,38 @@ static void *input_cmd_main(void *arg)
     }
     pthread_mutex_lock(&D.mtx);
     D.quit = true;
+    D.in_done = true;
     pthread_cond_broadcast(&D.redraw);
+    pthread_cond_broadcast(&D.idle);
     pthread_mutex_unlock(&D.mtx);
     return NULL;
+}
+
+/* ---- 끝내기 (맨 위의 끝내기와 DECISION) ---- */
+
+/* 서버가 응답하지 않거나 끝내는 중에 신호를 또 받았다: 남은 스레드를 거두지 않고 닫은 뒤 바로 끝낸다 */
+static void quit_now(void)
+{
+    term_restore();
+    pthread_mutex_lock(&D.mtx);
+    bool aborted = D.abort;
+    unsigned long long mine = D.my_draw, err = D.my_err;
+    pthread_mutex_unlock(&D.mtx);
+    fprintf(stderr, "draw_%s: #%u %s 기다리지 않고 끝낸다 (내가 그린 DRAW %llu개, 오류 %llu개)\n", IPC_NAME, D.id,
+            aborted ? "끝내는 중에 신호를 또 받아" : "서버가 응답하지 않아", mine, err);
+    tp_client_close();
+    _exit(1);
+}
+
+/* *flag 가 참이 되기를 sec 초까지 기다린다. mtx 를 쥐고 부르고 쥔 채 돌아온다. 끝내는 중에 신호를 또 받으면 바로 돌아온다 */
+static bool wait_flag_locked(const bool *flag, int sec)
+{
+    struct timespec dl;
+    clock_gettime(CLOCK_REALTIME, &dl);
+    dl.tv_sec += sec;
+    while (!*flag && !D.abort)
+        if (pthread_cond_timedwait(&D.idle, &D.mtx, &dl) == ETIMEDOUT) break;
+    return *flag && !D.abort;
 }
 
 /* ---- main ---- */
@@ -908,35 +960,52 @@ int main(int argc, char **argv)
         pthread_create(&t_in, NULL, input_cmd_main, NULL);
     }
 
-    /* 끝내기: 입력 스레드가 끝나거나(q, 입력 끝) 신호 스레드가 quit 을 세운다 */
+    /* 끝내기: 입력 스레드가 끝나거나(q, 입력 끝) 신호 스레드가 quit 을 세운다. 단계마다 기다리는 시간은 맨 위의 끝내기 */
     pthread_mutex_lock(&D.mtx);
     while (!D.quit) pthread_cond_wait(&D.redraw, &D.mtx);
     pthread_mutex_unlock(&D.mtx);
+    bool in_detached = false;                   /* 명령 줄 입력 스레드를 거두지 않았다 (맨 위의 DECISION) */
     if (D.tty) {
-        pthread_join(t_ref, NULL);
-        pthread_join(t_scr, NULL);
+        pthread_join(t_scr, NULL);              /* quit 을 보면 곧 끝난다 */
         term_restore();
         /* 입력 스레드는 키 하나를 더 기다리며 read 에 막혀 있을 수 있다. 분리해 두고 프로세스 종료로 정리한다 */
         pthread_detach(t_in);
+        /* 갱신 스레드는 주기만큼 자는 중이거나, 서버가 멈춰 가득 찬 요청 채널에서 송신이 막혀 있을 수 있다 */
+        pthread_mutex_lock(&D.mtx);
+        bool ref_ok = wait_flag_locked(&D.ref_done, D.interval_ms / 1000 + 1 + QUIT_WAIT_SEC);
+        pthread_mutex_unlock(&D.mtx);
+        if (!ref_ok) quit_now();
+        pthread_join(t_ref, NULL);
     } else {
-        pthread_join(t_in, NULL);
+        pthread_mutex_lock(&D.mtx);
+        bool in_done = D.in_done;
+        pthread_mutex_unlock(&D.mtx);
+        if (in_done) pthread_join(t_in, NULL);
+        else { pthread_detach(t_in); in_detached = true; }     /* 신호로 끝낸다. fgets 에 막혀 있다 */
     }
 
     /* 띄운 요청의 응답을 기다린 뒤 마지막 STATS 를 보내고, 그 응답을 받으면 수신 스레드가 끝난다 */
     pthread_mutex_lock(&D.mtx);
     struct timespec dl;
     clock_gettime(CLOCK_REALTIME, &dl);
-    dl.tv_sec += 3;
-    while (D.outstanding > 0 && !D.server_gone)
+    dl.tv_sec += QUIT_WAIT_SEC;
+    while (D.outstanding > 0 && !D.server_gone && !D.abort)
         if (pthread_cond_timedwait(&D.idle, &D.mtx, &dl) == ETIMEDOUT) break;
     bool gone = D.server_gone;
+    bool stuck = D.abort || (D.outstanding > 0 && !gone);  /* 서버가 멈춰 응답하지 않는다 */
     pthread_mutex_unlock(&D.mtx);
+    if (stuck) quit_now();
     /* 마지막 STATS 를 보내지 못하면(서버가 끝남) 수신 스레드는 ECONNRESET 으로 끝난다 */
     if (gone || send_req(REQ_STATS, NULL, 0, NULL, true) < 0) {
         pthread_mutex_lock(&D.mtx);
         gone = D.server_gone;
         pthread_mutex_unlock(&D.mtx);
     }
+    pthread_mutex_lock(&D.mtx);
+    bool recv_ok = wait_flag_locked(&D.recv_done, QUIT_WAIT_SEC);
+    gone = D.server_gone;
+    pthread_mutex_unlock(&D.mtx);
+    if (!recv_ok) quit_now();                   /* 마지막 STATS 의 응답이 오지 않는다 */
     pthread_join(t_recv, NULL);
     if (!gone) {
         msg_hdr_t h;
@@ -956,5 +1025,10 @@ int main(int argc, char **argv)
     free(D.rbuf);
     free(D.view);
     free(M.bits);
-    return gone && D.tty ? 1 : 0;
+    int code = gone && D.tty ? 1 : 0;
+    if (in_detached) {                          /* exit 가 입력 스레드의 stdin 잠금에서 멈춘다 (맨 위의 DECISION) */
+        fflush(stdout);
+        _exit(code);
+    }
+    return code;
 }

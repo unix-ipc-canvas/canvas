@@ -3,11 +3,14 @@
 
     python3 scripts/test-draw.py <ipc> <작업 폴더>
 
-서버를 띄우고 두 가지를 본다. 결과는 마지막 줄에 "ok ..." 또는 "ng ..." 로 쓰고 종료 코드 0/1 을 돌려준다.
+서버를 띄우고 세 가지를 본다. 결과는 마지막 줄에 "ok ..." 또는 "ng ..." 로 쓰고 종료 코드 0/1 을 돌려준다.
   1. 명령 줄 모드: draw 클라이언트 둘이 동시에 사각형 3,000개씩 그린다. 전체 SNAPSHOT 의 체크섬,
      서버 종료 체크섬, 이 스크립트가 같은 사각형을 다시 그려 낸 정답이 모두 같아야 한다.
   2. 화면 모드: 가상 터미널(pty)에서 draw 둘을 띄워 마우스로 붓 칠과 사각형을 그린다. 상태 줄에 접속 2명과
      보낸 DRAW 가 서버 처리 수로 보이고, q 로 끝나면 종료 코드 0, 화면 설정(대체 화면·마우스)이 되돌려져야 한다.
+  3. 멈춘 서버: 서버를 kill -STOP 한 채 명령 줄 모드에 quit 을 주면 10초 안에, SIGINT 를 두 번 보내면 2초 안에
+     종료 코드 1 로 끝나야 한다(마지막 STATS 의 응답을 정해진 시간까지만 기다린다). 서버를 다시 움직인 뒤에는
+     입력을 기다리던 명령 줄 모드가 SIGINT 한 번에 3초 안에 종료 코드 0 으로 끝나야 한다.
 """
 import os
 import pty
@@ -167,7 +170,68 @@ def tty_mode():
     return good, f'화면: 마우스 붓 보고 26번(이어 칠한 DRAW {want}) + 사각형 1개, 상태 줄 접속 {last[0]}명·서버 DRAW {last[1]}, 종료 코드 {codes}, 터미널 복구 {restored}'
 
 
+def stopped_server():
+    srv = start_server()
+
+    def spawn(first):
+        p = subprocess.Popen([DRAW], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        p.stdin.write(first)
+        p.stdin.flush()
+        return p
+
+    def wait_line(p, pat, t):
+        end = time.time() + t
+        while time.time() < end:
+            r, _, _ = select.select([p.stdout], [], [], 0.1)
+            if r:
+                line = p.stdout.readline()
+                if not line:
+                    return False
+                if pat in line:
+                    return True
+        return False
+
+    def ends_within(p, t):
+        t0 = time.time()
+        try:
+            rc = p.wait(t)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+            rc = None
+        return rc, time.time() - t0
+
+    # 서버가 살아 있을 때 둘을 붙여 둔다. 그린 것의 응답을 모두 받았으니 띄운 요청은 없다
+    a, b = spawn('draw 0 0 8 8 1\nsync\n'), spawn('draw 8 8 8 8 2\nsync\n')
+    synced = wait_line(a, 'sync ok', 10) and wait_line(b, 'sync ok', 10)
+    srv.send_signal(signal.SIGSTOP)                 # 서버 터미널의 Ctrl+Z 와 같다
+    a.stdin.write('quit\n')
+    a.stdin.flush()
+    rc_q, dt_q = ends_within(a, 10)                 # 마지막 STATS 의 응답을 3초까지만 기다린다
+    b.send_signal(signal.SIGINT)                    # 끝내기 시작. 그다음 신호는 기다리지 않고 바로 끝낸다
+    time.sleep(0.3)
+    t0 = time.time()
+    b.send_signal(signal.SIGINT)
+    rc_i2, _ = ends_within(b, 2)
+    dt_i2 = time.time() - t0
+    srv.send_signal(signal.SIGCONT)
+    c = spawn('sync\n')                             # 입력을 더 주지 않고 표준 입력을 열어 둔다
+    ready = wait_line(c, 'sync ok', 10)
+    c.send_signal(signal.SIGINT)
+    rc_i1, dt_i1 = ends_within(c, 3)
+    for p in (a, b, c):
+        try:
+            p.stdin.close()
+        except OSError:
+            pass
+    rc, _ = stop_server(srv)
+    good = synced and ready and rc_q == 1 and rc_i2 == 1 and rc_i1 == 0 and rc == 0
+    return good, (f'멈춘 서버: quit {dt_q:.1f}초 뒤 종료 코드 {rc_q}, SIGINT 두 번 {dt_i2:.1f}초 뒤 {rc_i2}, '
+                  f'다시 움직인 뒤 입력 대기 중 SIGINT {dt_i1:.1f}초 뒤 {rc_i1}, 서버 종료 코드 {rc}')
+
+
 ok1, m1 = cmd_mode()
 ok2, m2 = tty_mode()
-print(('ok ' if ok1 and ok2 else 'ng ') + f'{ipc}: {m1}; {m2}')
-sys.exit(0 if ok1 and ok2 else 1)
+ok3, m3 = stopped_server()
+print(('ok ' if ok1 and ok2 and ok3 else 'ng ') + f'{ipc}: {m1}; {m2}; {m3}')
+sys.exit(0 if ok1 and ok2 and ok3 else 1)
