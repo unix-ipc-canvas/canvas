@@ -35,14 +35,19 @@ static uint64_t base;
 static uint8_t *rbuf;
 static char eb[128];
 
-static int send_req(uint32_t type, uint64_t rid, const void *p, uint32_t len)
+static int send_req_room(uint32_t type, uint64_t rid, uint32_t room, const void *p, uint32_t len)
 {
-    msg_hdr_t h = { .type = type, .client_id = id, .req_id = rid, .payload_len = len };
+    msg_hdr_t h = { .type = type, .client_id = id, .req_id = rid, .payload_len = len, .reserved = room };
     if (tp_send_req(&h, p) < 0) {
         printf("FAIL 요청 보내기: %s\n", err_str(errno, eb, sizeof eb));
         return -1;
     }
     return 0;
+}
+
+static int send_req(uint32_t type, uint64_t rid, const void *p, uint32_t len)
+{
+    return send_req_room(type, rid, 0, p, len);
 }
 
 /* 응답 하나를 받는다. 서버 시각 순서까지 본다. 실패하면 -1 (출력은 여기서 한다) */
@@ -87,34 +92,57 @@ static void bye(void)
 
 /* ---- bad ---- */
 
+static int expect_err(const char *what, uint32_t type, uint64_t rid, uint32_t room, const void *p, uint32_t len)
+{
+    if (send_req_room(type, rid, room, p, len) < 0) return 3;
+    msg_hdr_t h;
+    ssize_t r = recv_resp(&h);
+    if (r < 0) return 4;
+    if (h.type != RESP_ERROR || r != (ssize_t)sizeof(srv_ts_t) || h.req_id != rid) {
+        printf("FAIL %s: type %u, %zd B (RESP_ERROR, 32B 이어야 함)\n", what, h.type, r);
+        return 5;
+    }
+    return 0;
+}
+
 static int run_bad(void)
 {
-    struct { const char *what; uint32_t type; draw_req_t d; uint32_t len; } bad[] = {
-        { "DRAW x+w > 1024",      REQ_DRAW,     { .x = 1000, .y = 0, .w = 25, .h = 1, .v = 7 }, sizeof(draw_req_t) },
-        { "DRAW y+h > 1024",      REQ_DRAW,     { .x = 0, .y = 1023, .w = 1, .h = 2, .v = 7 }, sizeof(draw_req_t) },
-        { "DRAW x = 1024",        REQ_DRAW,     { .x = 1024, .y = 0, .w = 1, .h = 1, .v = 7 }, sizeof(draw_req_t) },
-        { "DRAW 65535",           REQ_DRAW,     { .x = 65535, .y = 65535, .w = 65535, .h = 65535, .v = 7 }, sizeof(draw_req_t) },
-        { "DRAW w = 0",           REQ_DRAW,     { .x = 5, .y = 5, .w = 0, .h = 3, .v = 7 }, sizeof(draw_req_t) },
-        { "DRAW h = 0",           REQ_DRAW,     { .x = 5, .y = 5, .w = 3, .h = 0, .v = 7 }, sizeof(draw_req_t) },
-        { "DRAW payload 8B",      REQ_DRAW,     { .x = 0, .y = 0, .w = 4, .h = 4, .v = 7 }, 8 },
-        { "SNAPSHOT x+w > 1024",  REQ_SNAPSHOT, { .x = 1000, .y = 0, .w = 25, .h = 1 }, sizeof(snap_req_t) },
-        { "SNAPSHOT y+h > 1024",  REQ_SNAPSHOT, { .x = 0, .y = 1023, .w = 1, .h = 2 }, sizeof(snap_req_t) },
-        { "SNAPSHOT w = 0",       REQ_SNAPSHOT, { .x = 5, .y = 5, .w = 0, .h = 3 }, sizeof(snap_req_t) },
-        { "SNAPSHOT h = 0",       REQ_SNAPSHOT, { .x = 5, .y = 5, .w = 3, .h = 0 }, sizeof(snap_req_t) },
-        { "SNAPSHOT payload 4B",  REQ_SNAPSHOT, { .x = 0, .y = 0, .w = 4, .h = 4 }, 4 },
-        { "모르는 종류 77",        77,           { 0 }, 0 },
+    uint64_t rid = base + 1;
+    /* 1. 없는 방으로 HELLO → 거부되어야 하며 접속 등록도 되지 않아야 한다 */
+    int rc = expect_err("HELLO 없는 방 1", REQ_HELLO, rid++, 1, NULL, 0);
+    if (rc) return rc;
+    /* 2. HELLO 성공 전(미등록 상태)의 DRAW·SNAPSHOT → 모두 거부되고 캔버스가 변하면 안 된다 */
+    draw_req_t d_ok = { .x = 0, .y = 0, .w = 4, .h = 4, .v = 9 };
+    snap_req_t s_ok = { .x = 0, .y = 0, .w = 4, .h = 4 };
+    if ((rc = expect_err("HELLO 전 DRAW", REQ_DRAW, rid++, 0, &d_ok, sizeof d_ok))) return rc;
+    if ((rc = expect_err("HELLO 전 SNAPSHOT", REQ_SNAPSHOT, rid++, 0, &s_ok, sizeof s_ok))) return rc;
+
+    /* 3. 정상 HELLO 로 방 0 에 등록 */
+    if ((rc = hello())) return rc;
+
+    /* 4. 등록 뒤 잘못된 요청들 (좌표·크기·길이·없는 방·모르는 종류) */
+    struct { const char *what; uint32_t type; uint32_t room; draw_req_t d; uint32_t len; } bad[] = {
+        { "DRAW x+w > 1024",      REQ_DRAW,     0, { .x = 1000, .y = 0, .w = 25, .h = 1, .v = 7 }, sizeof(draw_req_t) },
+        { "DRAW y+h > 1024",      REQ_DRAW,     0, { .x = 0, .y = 1023, .w = 1, .h = 2, .v = 7 }, sizeof(draw_req_t) },
+        { "DRAW x = 1024",        REQ_DRAW,     0, { .x = 1024, .y = 0, .w = 1, .h = 1, .v = 7 }, sizeof(draw_req_t) },
+        { "DRAW 65535",           REQ_DRAW,     0, { .x = 65535, .y = 65535, .w = 65535, .h = 65535, .v = 7 }, sizeof(draw_req_t) },
+        { "DRAW w = 0",           REQ_DRAW,     0, { .x = 5, .y = 5, .w = 0, .h = 3, .v = 7 }, sizeof(draw_req_t) },
+        { "DRAW h = 0",           REQ_DRAW,     0, { .x = 5, .y = 5, .w = 3, .h = 0, .v = 7 }, sizeof(draw_req_t) },
+        { "DRAW payload 8B",      REQ_DRAW,     0, { .x = 0, .y = 0, .w = 4, .h = 4, .v = 7 }, 8 },
+        { "DRAW 없는 방 1",        REQ_DRAW,     1, { .x = 0, .y = 0, .w = 4, .h = 4, .v = 7 }, sizeof(draw_req_t) },
+        { "SNAPSHOT x+w > 1024",  REQ_SNAPSHOT, 0, { .x = 1000, .y = 0, .w = 25, .h = 1 }, sizeof(snap_req_t) },
+        { "SNAPSHOT y+h > 1024",  REQ_SNAPSHOT, 0, { .x = 0, .y = 1023, .w = 1, .h = 2 }, sizeof(snap_req_t) },
+        { "SNAPSHOT w = 0",       REQ_SNAPSHOT, 0, { .x = 5, .y = 5, .w = 0, .h = 3 }, sizeof(snap_req_t) },
+        { "SNAPSHOT h = 0",       REQ_SNAPSHOT, 0, { .x = 5, .y = 5, .w = 3, .h = 0 }, sizeof(snap_req_t) },
+        { "SNAPSHOT payload 4B",  REQ_SNAPSHOT, 0, { .x = 0, .y = 0, .w = 4, .h = 4 }, 4 },
+        { "SNAPSHOT 없는 방 1",    REQ_SNAPSHOT, 1, { .x = 0, .y = 0, .w = 4, .h = 4 }, sizeof(snap_req_t) },
+        { "STATS payload 4B",     REQ_STATS,    0, { 0 }, 4 },
+        { "모르는 종류 77",        77,           0, { 0 }, 0 },
     };
     unsigned n = sizeof bad / sizeof bad[0];
     for (unsigned i = 0; i < n; i++) {
         /* snap_req_t 는 draw_req_t 의 앞 8B 와 같은 배치다(x, y, w, h) */
-        if (send_req(bad[i].type, base + 1 + i, &bad[i].d, bad[i].len) < 0) return 3;
-        msg_hdr_t h;
-        ssize_t r = recv_resp(&h);
-        if (r < 0) return 4;
-        if (h.type != RESP_ERROR || r != (ssize_t)sizeof(srv_ts_t) || h.req_id != base + 1 + i) {
-            printf("FAIL %s: type %u, %zd B (RESP_ERROR, 32B 이어야 함)\n", bad[i].what, h.type, r);
-            return 5;
-        }
+        if ((rc = expect_err(bad[i].what, bad[i].type, rid++, bad[i].room, &bad[i].d, bad[i].len))) return rc;
     }
     /* 오류 뒤에도 정상 요청은 처리된다 */
     snap_req_t s = { 1020, 1020, 4, 4 };
@@ -126,7 +154,7 @@ static int run_bad(void)
         printf("FAIL 오류 뒤 정상 SNAPSHOT: type %u, %zd B\n", h.type, r);
         return 5;
     }
-    printf("ok   잘못된 요청 %u종 모두 RESP_ERROR, 그 뒤 정상 요청 RESP_OK\n", n);
+    printf("ok   잘못된 요청 %u종 모두 RESP_ERROR, 그 뒤 정상 요청 RESP_OK\n", n + 3);
     return 0;
 }
 

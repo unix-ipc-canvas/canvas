@@ -18,6 +18,7 @@ from collections import defaultdict
 LABEL = {
     'scale-pipe': 'pipe',
     'scale-mq1': 'mq (큐 1쌍)',
+    'scale-mq16': 'mq (큐 16쌍)',
     'scale-mq64': 'mq (큐 64쌍)',
     'scale-shm': 'shm (공유 요청 링)',
     'scale-shmper': 'shm (클라이언트별 요청 링)',
@@ -91,7 +92,7 @@ def main(src, out):
     except ImportError:
         return
     fig, ax = plt.subplots(figsize=(7.5, 4.5), dpi=150)
-    marks = {'scale-pipe': 'o', 'scale-mq1': 'x', 'scale-mq64': 's', 'scale-shm': '^', 'scale-shmper': 'D'}
+    marks = {'scale-pipe': 'o', 'scale-mq1': 'x', 'scale-mq16': 's', 'scale-mq64': 's', 'scale-shm': '^', 'scale-shmper': 'D'}
     for e in exps:
         xs = [n for n in ns if agg[e].get(n)]
         ys = [statistics.median(x['thr'] for x in agg[e][n]) for n in xs]
