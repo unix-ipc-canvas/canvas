@@ -42,9 +42,9 @@ TPTEST := $(if $(wildcard src/test/tptest.c),$(HAVE:%=$(BIN)/tptest_%)) \
           $(if $(wildcard src/test/apptest.c),$(HAVE:%=$(BIN)/apptest_%))
 
 .PHONY: all bench app tptest check test clean ipcclean dist
-all: check bench app $(VERIFY) $(TPTEST)
+all: check bench app $(TPTEST)
 bench: $(BENCH)
-app: $(APP)
+app: $(APP) $(VERIFY)
 tptest: $(TPTEST)
 
 define IPC_RULES
@@ -113,7 +113,7 @@ ipcclean:
 	done; rm -f /tmp/osproject_$(TEAM_NO)_*; echo "정리 완료. 확인: ipcs"
 
 dist: clean
-	tar cvf osproject_$(TEAM_NO).tar Makefile readme.txt include src scripts results
+	tar cvf osproject_$(TEAM_NO).tar Makefile readme.txt include src scripts results docs/records/ai-log.md docs/records/ai-chats
 
 clean:
 	rm -rf $(BIN) $(OBJ) osproject_*.tar

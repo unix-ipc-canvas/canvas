@@ -391,14 +391,18 @@ else
         done
         cf=0; for p in $pids; do wait "$p" || cf=$((cf + 1)); done
         tmo 20 "bin/client_$i" -i 9 -k 5 -n 10 -w 0 -m 100 >"$W/r9.out" 2>&1; bad_room=$?
+        bad_draw=1
+        if [ -x "bin/draw_$i" ]; then
+            tmo 20 "bin/draw_$i" -i 10 -k 5 </dev/null >"$W/r10.out" 2>&1; bad_draw=$?
+        fi
         srv_stop; rc=$?
         want=$(bin/verify -c 8 -n 1000 -K 4 2>/dev/null | tail -1)
         rooms_srv=$(grep -c '^room [0-3] checksum' "$W/srv.out")
         rooms_ok=$(bin/verify -c 8 -n 1000 -K 4 2>/dev/null | grep '^room' | grep -cxFf - "$W/srv.out")
-        if [ "$cf" = 0 ] && [ "$rc" = 0 ] && [ "$(srv_sum)" = "$want" ] && [ "$rooms_ok" = 4 ] && [ "$bad_room" != 0 ]; then
-            ok T-23 "$i: 방 4개 × 클라이언트 8개, 방마다 체크섬 = 검증기 (${rooms_ok}/4), 없는 방(5) 요청은 오류 응답"
+        if [ "$cf" = 0 ] && [ "$rc" = 0 ] && [ "$(srv_sum)" = "$want" ] && [ "$rooms_ok" = 4 ] && [ "$bad_room" != 0 ] && [ "$bad_draw" != 0 ]; then
+            ok T-23 "$i: 방 4개 × 클라이언트 8개, 방마다 체크섬 = 검증기 (${rooms_ok}/4), 없는 방(5) 입장·요청은 오류 응답"
         else
-            ng T-23 "$i: 클라이언트 실패 $cf, 서버 $rc, 방 체크섬 맞음 $rooms_ok/4(서버 줄 $rooms_srv), 없는 방 클라이언트 종료 코드 $bad_room"
+            ng T-23 "$i: 클라이언트 실패 $cf, 서버 $rc, 방 체크섬 맞음 $rooms_ok/4(서버 줄 $rooms_srv), 없는 방 client=$bad_room draw=$bad_draw"
         fi
 
         # T-24 클라이언트 256개가 방 16개에 한꺼번에: 모두 끝나고 방마다 체크섬 = 검증기, 자원이 남지 않는다.
@@ -408,8 +412,14 @@ else
             shm) sev="OSP_SHM_REQ_RING=per" ;;
             *)   sev="" ;;
         esac
+        q_before=$(ipcs -q 2>/dev/null | grep -c '^0x')
         if env $sev LIMIT=120 timeout -k 5 200 scripts/scale-test.sh "$i" 256 16 100 4 -l tile -w 8 >"$log" 2>&1; then
-            ok T-24 "$(tail -1 "$log" | sed 's/^ok *//') ${sev:+($sev)}"
+            q_after=$(ipcs -q 2>/dev/null | grep -c '^0x')
+            if [ "$q_after" -le "$q_before" ]; then
+                ok T-24 "$(tail -1 "$log" | sed 's/^ok *//') ${sev:+($sev)}"
+            else
+                ng T-24 "종료 뒤 메시지 큐(IPC_PRIVATE 포함)가 남음 ($q_before → $q_after) ${sev:+($sev)}"; make -s ipcclean >/dev/null 2>&1
+            fi
         else
             ng T-24 "$(tail -1 "$log") ${sev:+($sev)}"; tail -5 "$log"; make -s ipcclean >/dev/null 2>&1
         fi

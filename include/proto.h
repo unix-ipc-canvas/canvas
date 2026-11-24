@@ -14,7 +14,7 @@
 #define CANVAS_W   1024u            /* 가로 칸 수 */
 #define CANVAS_H   1024u            /* 세로 칸 수, 한 칸 1바이트 → 전체 1MB */
 
-#define MAX_CLIENTS 1024u           /* 동시에 붙을 수 있는 클라이언트 번호 0 .. MAX_CLIENTS-1 (11/24 16 → 1024) */
+#define MAX_CLIENTS 256u            /* 동시에 붙을 수 있는 클라이언트 번호 0 .. MAX_CLIENTS-1 (11/24 16 → 256) */
 #define MAX_ROOMS   64u             /* 서버가 둘 수 있는 그림판(방) 수. 서버 -K 로 정한다 (11/24 추가) */
 
 enum msg_type {

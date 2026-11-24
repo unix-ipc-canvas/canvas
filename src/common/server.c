@@ -107,6 +107,7 @@ static struct {
     /* 통계. 값 하나를 더하는 연산뿐이라 원자적 변수로 둔다 */
     _Atomic uint64_t n_draw, n_snap, bytes_sent, n_err, n_drop, n_gone;
     atomic_bool      connected[MAX_CLIENTS];
+    _Atomic uint32_t client_room[MAX_CLIENTS]; /* HELLO 에서 입장한 그림판(방) 번호 */
     _Atomic uint32_t n_clients;
     atomic_bool      seen_id[MAX_CLIENTS];
     _Atomic uint32_t seen;          /* HELLO 를 보낸 적 있는 번호의 수 (CSV 의 clients) */
@@ -203,13 +204,19 @@ static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
 
     switch (j->hdr.type) {
     case REQ_HELLO:
+        if (j->len != 0 || j->hdr.reserved >= S.rooms) {
+            ok = false;
+            break;
+        }
+        atomic_store(&S.client_room[id], j->hdr.reserved);
         if (!atomic_exchange(&S.connected[id], true)) atomic_fetch_add(&S.n_clients, 1);
         if (!atomic_exchange(&S.seen_id[id], true)) atomic_fetch_add(&S.seen, 1);
         ts.t_lock = now_ns();
         break;
 
     case REQ_DRAW:
-        if (j->hdr.reserved >= S.rooms || j->len != sizeof(draw_req_t) ||
+        if (!atomic_load(&S.connected[id]) || j->hdr.reserved >= S.rooms ||
+            j->hdr.reserved != atomic_load(&S.client_room[id]) || j->len != sizeof(draw_req_t) ||
             canvas_draw(S.cv[j->hdr.reserved], &j->p.draw, &ts.t_lock) < 0) {
             ok = false;
             break;
@@ -219,7 +226,9 @@ static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
 
     case REQ_SNAPSHOT: {
         const snap_req_t *q = &j->p.snap;
-        if (j->hdr.reserved >= S.rooms || j->len != sizeof(snap_req_t) || !canvas_rect_ok(q->x, q->y, q->w, q->h) ||
+        if (!atomic_load(&S.connected[id]) || j->hdr.reserved >= S.rooms ||
+            j->hdr.reserved != atomic_load(&S.client_room[id]) || j->len != sizeof(snap_req_t) ||
+            !canvas_rect_ok(q->x, q->y, q->w, q->h) ||
             canvas_snapshot(S.cv[j->hdr.reserved], q, buf + sizeof ts, &ts.t_lock) < 0) {
             ok = false;
             break;
@@ -230,6 +239,10 @@ static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
     }
 
     case REQ_STATS: {
+        if (!atomic_load(&S.connected[id]) || j->len != 0) {
+            ok = false;
+            break;
+        }
         ts.t_lock = now_ns();
         stats_resp_t st = {
             .n_draw = atomic_load(&S.n_draw),
@@ -493,8 +506,8 @@ int main(int argc, char **argv)
         fatal("pthread_create", e);
     }
 
-    fprintf(stderr, "server_%s: 시작 (워커 %u%s, 락 %s, 타일 %u). Ctrl+C 로 끝낸다\n", tp_name(),
-            S.direct ? 0 : S.workers, S.direct ? ", -d 직접 처리" : "", lock_mode_name(S.lock), S.tile);
+    fprintf(stderr, "server_%s: 시작 (워커 %u%s, 락 %s, 타일 %u, 방 %u). Ctrl+C 로 끝낸다\n", tp_name(),
+            S.direct ? 0 : S.workers, S.direct ? ", -d 직접 처리" : "", lock_mode_name(S.lock), S.tile, S.rooms);
 
     if (have_recv) pthread_join(rx, NULL);
     for (unsigned i = 0; i < nwk; i++) pthread_join(wk[i], NULL);

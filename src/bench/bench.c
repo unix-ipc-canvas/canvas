@@ -37,6 +37,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -785,8 +786,18 @@ static int wait_ready(child_t *ch, unsigned cnt, bool *ready, unsigned clients, 
     }
 }
 
+static void raise_fd_limit(unsigned clients)
+{
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) < 0) return;
+    rlim_t want = (rlim_t)clients * 2 + 256;
+    if (rl.rlim_max != RLIM_INFINITY && want > rl.rlim_max) want = rl.rlim_max;
+    if (rl.rlim_cur < want) { rl.rlim_cur = want; setrlimit(RLIMIT_NOFILE, &rl); }
+}
+
 static int run_driver(const cfg_t *cfg)
 {
+    raise_fd_limit(cfg->clients);
     char dir[] = "/tmp/canvas_bench_XXXXXX";
     if (!mkdtemp(dir)) { perror("bench: mkdtemp"); return 1; }
 

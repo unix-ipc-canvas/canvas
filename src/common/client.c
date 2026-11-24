@@ -290,6 +290,7 @@ static void *send_main(void *arg)
         memset(&h, 0, sizeof h);
         h.type = REQ_BYE;
         h.client_id = cfg->id;
+        h.reserved = cfg->room;
         h.req_id = C.next_id++;
         if (tp_send_req(&h, NULL) < 0 && errno != EPIPE) fail("BYE 보내기", errno);
     }
@@ -577,6 +578,7 @@ static int hello(void)
     memset(&h, 0, sizeof h);
     h.type = REQ_HELLO;
     h.client_id = C.cfg.id;
+    h.reserved = C.cfg.room;
     h.req_id = C.next_id++;
     uint64_t want = h.req_id;
     if (tp_send_req(&h, NULL) < 0) { fail("HELLO 보내기", errno); return -1; }
@@ -584,7 +586,7 @@ static int hello(void)
         ssize_t r = tp_recv_resp(&h, C.rbuf, MAX_PAYLOAD);
         if (r < 0) { fail("HELLO 응답 받기", errno); return -1; }
         if (h.req_id != want) { C.n_stale++; continue; }
-        if (h.type != RESP_OK) { fail("서버가 HELLO 를 거부했다", 0); return -1; }
+        if (h.type != RESP_OK) { fail("서버가 HELLO 를 거부했다 (없는 방 번호일 수 있다)", 0); return -1; }
         return 0;
     }
 }
