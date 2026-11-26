@@ -38,8 +38,10 @@
  * DECISION: 통계 카운터(n_draw, n_snapshot)는 응답을 보내기 전에 올린다. 보낸 뒤에 올리면, 응답을 받은 클라이언트가
  *   곧바로 보낸 STATS 를 다른 워커가 먼저 처리해 방금 처리한 요청이 빠진 값을 돌려줄 수 있다(T-16).
  *   bytes_sent 는 보내기에 성공한 응답 payload(서버 시각 포함)의 합이라 보낸 뒤에 더한다.
- * DECISION: STATS 의 n_clients 는 지금 접속해 있는 클라이언트 수다(HELLO 를 받고 BYE 를 받지 않은 번호의 수).
- *   BYE 없이 죽은 클라이언트는 같은 번호로 다시 HELLO 할 때까지 접속한 것으로 센다.
+ * DECISION: STATS 의 n_clients 는 지금 접속해 있는 클라이언트 수다(HELLO 를 받고 BYE 를 받지 않은 번호 가운데
+ *   전송 계층의 tp_client_alive 가 끝났다고 하지 않는 번호의 수, live_clients). BYE 없이 kill -9 로 죽은 클라이언트도
+ *   빠진다. 다만 pipe 에서 워커가 그 FIFO 에 쓰는 중인 번호는 살았는지 알 수 없어 접속한 것으로 센다
+ *   (11/26 검토에서 고침. 그 전에는 죽은 클라이언트를 계속 셌다).
  * DECISION: BYE 에는 응답하지 않는다. 클라이언트가 BYE 의 응답을 기다리지 않고 곧 응답 채널을 닫는다(client.c).
  * DECISION: 요청 payload 는 가장 큰 응용 요청(draw_req_t, 16B)까지만 받는다. 더 큰 요청은 전송 계층이 버리고
  *   EMSGSIZE 를 돌려주며, 어느 요청인지 알 수 없어 응답하지 않고 버린 수만 센다. 응용 클라이언트는 만들지 않는 요청이다.
@@ -187,6 +189,19 @@ static void queue_close(void)
 /* ---- 요청 처리 ---- */
 
 /* 요청 하나를 처리하고 응답한다. buf 는 이 스레드의 MAX_PAYLOAD 응답 버퍼다 */
+/*
+ * STATS 의 접속 수: HELLO 를 받고 BYE 를 받지 않은 번호 가운데 전송 계층이 끝났다고 하지 않는 번호의 수.
+ * BYE 없이 kill -9 로 죽은 클라이언트를 빼기 위해서다. connected[] 는 바꾸지 않는다. 같은 번호의 새 클라이언트가
+ * HELLO 하는 것과 겹쳐 그 클라이언트의 요청을 거부하게 될 수 있어서, 세기만 하고 지우지 않는다.
+ */
+static uint32_t live_clients(void)
+{
+    uint32_t n = 0;
+    for (uint32_t id = 0; id < MAX_CLIENTS; id++)
+        if (atomic_load(&S.connected[id]) && tp_client_alive(id) != 0) n++;
+    return n;
+}
+
 static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
 {
     uint32_t id = j->hdr.client_id;
@@ -248,7 +263,7 @@ static void handle(const job_t *j, uint64_t t_deq, uint8_t *buf)
             .n_draw = atomic_load(&S.n_draw),
             .n_snapshot = atomic_load(&S.n_snap),
             .bytes_sent = atomic_load(&S.bytes_sent),
-            .n_clients = atomic_load(&S.n_clients),
+            .n_clients = live_clients(),
             .n_workers = S.direct ? 0 : S.workers,
         };
         memcpy(buf + sizeof ts, &st, sizeof st);

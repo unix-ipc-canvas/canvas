@@ -90,7 +90,7 @@ enum { S_MUTEX = 0, S_FREE = 1, S_MSGS = 2, S_PER_RING = 3 };    /* 링 하나�
 #define SEM_MAX_VALUE  32767u               /* SEMVMX. FREE 의 최댓값 = 칸 수의 한도 */
 /*
  * 클라이언트별 요청 링 하나에 띄워 둘 수 있는 메시지 수. TOTAL 은 링 MAX_CLIENTS 개의 메시지 수 합과
- * 깨우기(tp_server_wake, 한 번)를 센다. 그 합이 SEM_MAX_VALUE 를 넘지 않게 한다 (1024개면 31).
+ * 깨우기(tp_server_wake, 한 번)를 센다. 그 합이 SEM_MAX_VALUE 를 넘지 않게 한다 (MAX_CLIENTS 256개면 127).
  */
 #define PER_RING_MSGS  ((SEM_MAX_VALUE - 1u) / MAX_CLIENTS)
 _Static_assert(PER_RING_MSGS >= 1, "클라이언트별 요청 링은 메시지를 하나 이상 담아야 한다. MAX_CLIENTS 가 너무 크다");
@@ -618,6 +618,13 @@ void tp_server_close(void)
         nanosleep(&ts, NULL);
     }
     server_release();
+}
+
+/* 클라이언트 자리 잠금(바이트 LOCK_CLIENT(id))은 그 프로세스가 끝나면 커널이 푼다 */
+int tp_client_alive(uint32_t id)
+{
+    if (id >= MAX_CLIENTS || srv_lock_fd < 0) return -1;
+    return byte_locked(srv_lock_fd, LOCK_CLIENT(id));
 }
 
 /* ================================================================
