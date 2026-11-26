@@ -1,0 +1,88 @@
+# scripts/app-bench.sh 가 측정을 시작할 때 기록한 환경
+date: 2026-11-24T02:34:19+09:00
+commit: 64cc11a
+reps: 2, ipcs: shm, experiments: clients draw, workers: 1 2 4 8
+
+## lscpu
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      34%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+
+## free -h
+               total        used        free      shared  buff/cache   available
+Mem:            14Gi       8.1Gi       440Mi       2.1Gi       8.9Gi       6.7Gi
+
+## os
+Ubuntu 26.04.1 LTS
+7.0.0-43-generic
+
+## gcc
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+
+## virtualization
+none
+
+## cpufreq governor
+     12 powersave
+
+## CPU 배치 (taskset 으로 묶었는지)
+pid 216372's current affinity list: 0-11
+
+## IPC 한도
+msgmax: 8192
+msgmnb: 16384
+PIPE_BUF: 4096
+pipe-max-size: 1048576
+ulimit -n: 524288
+
+## 전송 계층 환경 변수 (OSP_*, 설계 개선 실험)
+OSP_SHM_REQ_RING=per
+
+## 측정 시작 때 CPU 를 쓰는 프로세스
+ 02:34:19 up  6:54,  1 user,  load average: 2.44, 11.08, 26.36
+top - 02:34:20 up  6:54,  1 user,  load average: 2.44, 11.08, 26.36
+Tasks: 438 total,   2 running, 436 sleeping,   0 stopped,   0 zombie
+%Cpu(s): 14.9 us,  2.4 sy,  0.0 ni, 82.3 id,  0.3 wa,  0.0 hi,  0.2 si,  0.0 st 
+MiB Mem :  15156.7 total,    404.7 free,   8360.2 used,   9156.8 buff/cache     
+MiB Swap:   4096.0 total,   4095.0 free,      1.0 used.   6796.6 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+ 215583 movingg+  20   0   19.1g 470652 132200 S  97.0   3.0   0:06.34 Isolated Web Co
+ 214234 movingg+  20   0   12.3g 637276 306012 S  79.2   4.1   0:12.33 firefox
+   4596 movingg+  20   0 9455224 366348 212836 R  14.9   2.4  23:37.30 gnome-shell
+  67152 movingg+  20   0 7048720 953616 920776 S   5.0   6.1  25:52.59 qemu-system-x86
+ 214757 movingg+  20   0 3082968 198080 115324 S   3.0   1.3   0:01.23 Privileged Cont
+ 111738 movingg+  20   0  720048  40984  23860 S   2.0   0.3   3:25.91 winedevice.exe
+ 216630 movingg+  20   0    7776   5796   3708 R   2.0   0.0   0:00.03 top
+     15 root      20   0       0      0      0 I   1.0   0.0   0:22.43 rcu_preempt
+   1850 root      20   0 2541232  48208  31320 S   1.0   0.3   0:43.20 containerd
+ 163524 root       0 -20       0      0      0 I   1.0   0.0   0:03.16 kworker/u49:0-i915_flip
+ 190766 root      20   0       0      0      0 I   1.0   0.0   0:01.52 kworker/u48:1-i915
+ 204426 root      20   0       0      0      0 D   1.0   0.0   0:01.26 kworker/u48:0+kec
+
+## 측정 끝: 2026-11-24T02:34:33+09:00, 13초, 실행 32 번, 실패 0 번
+
+## 측정 끝 때 CPU 를 쓰는 프로세스
+ 02:34:33 up  6:54,  1 user,  load average: 3.42, 10.88, 26.05
+top - 02:34:34 up  6:54,  1 user,  load average: 3.42, 10.88, 26.05
+Tasks: 438 total,   3 running, 435 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  6.6 us,  1.7 sy,  0.0 ni, 91.6 id,  0.0 wa,  0.0 hi,  0.1 si,  0.0 st 
+MiB Mem :  15156.7 total,    606.3 free,   8058.5 used,   9172.6 buff/cache     
+MiB Swap:   4096.0 total,   4095.0 free,      1.0 used.   7098.2 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+ 215583 movingg+  20   0 3271748 411108 158472 S  39.2   2.6   0:10.23 Isolated Web Co
+ 214234 movingg+  20   0 4551372 653256 320748 S  38.2   4.2   0:15.29 firefox
+   4596 movingg+  20   0 9455160 366012 212836 R  14.7   2.4  23:38.51 gnome-shell
+  67152 movingg+  20   0 7048720 953616 920776 S   5.9   6.1  25:53.22 qemu-system-x86
+ 111738 movingg+  20   0  720048  40984  23860 S   2.9   0.3   3:26.17 winedevice.exe
+ 217899 movingg+  20   0    7776   5788   3696 R   2.0   0.0   0:00.04 top
+     15 root      20   0       0      0      0 I   1.0   0.0   0:22.45 rcu_preempt
+    502 systemd+  20   0   16824   7544   6496 S   1.0   0.0   0:11.16 systemd-oomd
+    599 root     -51   0       0      0      0 S   1.0   0.0   0:02.11 irq/161-iwlwifi:queue_5
+   1469 root      20   0  544256  15956  12620 S   1.0   0.1   0:13.62 udisksd
+   9083 movingg+  20   0   53.0g 182752 155220 S   1.0   1.2   8:58.65 claude-desktop
+ 111771 movingg+  20   0 3694132 308268  45988 S   1.0   2.0   0:50.73 KakaoTalk.exe
