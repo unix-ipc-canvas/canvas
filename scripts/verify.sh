@@ -196,7 +196,7 @@ run_clients() {
 
 srv_sum() { grep '^checksum' "$W/srv.out"; }
 
-RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-23 T-24 T-25 T-26 T-30 T-31"
+RUN_T="T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-23 T-24 T-25 T-26 T-27 T-30 T-31"
 app_have=""
 for i in pipe mq shm; do
     [ -x "bin/server_$i" ] && [ -x "bin/client_$i" ] && [ -x "bin/apptest_$i" ] && app_have="$app_have $i"
@@ -380,6 +380,26 @@ else
             else ng T-19 "$(tail -1 "$log" | sed 's/^ng *//')"; make -s ipcclean >/dev/null 2>&1; fi
         else
             sk T-19 "$i: bin/draw_$i 또는 python3 없음"
+        fi
+
+        # T-27 STATS 의 접속 수: 클라이언트가 BYE 없이 kill -9 로 죽으면 접속 수에서 빠진다
+        if [ -x "bin/draw_$i" ]; then
+            srv_start "$i" -w 4
+            "bin/client_$i" -i 3 -n 2000000 -f 4 >/dev/null 2>&1 &
+            kp=$!
+            sleep 0.7
+            c1=$(printf 'stats\nquit\n' | tmo 20 "bin/draw_$i" -i 5 2>/dev/null | sed -n 's/^stats clients=\([0-9]*\).*/\1/p')
+            kill -9 "$kp" 2>/dev/null; wait "$kp" 2>/dev/null
+            sleep 0.5
+            c2=$(printf 'stats\nquit\n' | tmo 20 "bin/draw_$i" -i 5 2>/dev/null | sed -n 's/^stats clients=\([0-9]*\).*/\1/p')
+            srv_stop; rc=$?
+            if [ "$c1" = 2 ] && [ "$c2" = 1 ] && [ "$rc" = 0 ]; then
+                ok T-27 "$i: 살아 있을 때 접속 $c1, 클라이언트 kill -9 뒤 $c2 (pipe 는 죽은 클라이언트의 응답 FIFO 를 서버가 닫을 때 지운다. 남은 자원은 T-20)"
+            else
+                ng T-27 "$i: 살아 있을 때 접속 '$c1'(2여야), kill -9 뒤 '$c2'(1이어야), 서버 $rc"; make -s ipcclean >/dev/null 2>&1
+            fi
+        else
+            sk T-27 "$i: bin/draw_$i 없음"
         fi
 
         # T-23 그림판 4개(-K 4)에 클라이언트 8개가 나눠 그리기: 방마다 체크섬 = 검증기(-K 4), 없는 방 번호는 오류 응답

@@ -368,6 +368,23 @@ fail:;
 
 static int open_resp(uint32_t id);
 
+/*
+ * 서버를 닫을 때: kill -9 로 죽은 클라이언트는 자기 응답 FIFO 를 지우지 못한다. 그 이름을 쓰기로 막히지 않게 열어 보아
+ * 읽는 쪽이 없으면(ENXIO) 지운다. 살아 있는 클라이언트는 FIFO 를 만들자마자 읽기 끝을 열어 두므로 지우지 않는다
+ * (만들고 열기 사이의 아주 짧은 틈에 걸리면 지워지지만, 서버가 끝나는 중이라 그 클라이언트도 곧 끝난다).
+ * 호출하는 쪽이 srv_resp_mtx[id] 를 잡고 있어야 한다
+ */
+static void unlink_dead_fifo_locked(uint32_t id)
+{
+    char path[PATH_LEN];
+    resp_path(path, id);
+    struct stat st;
+    if (stat(path, &st) < 0 || !S_ISFIFO(st.st_mode)) return;
+    int fd = open(path, O_WRONLY | O_NONBLOCK);
+    if (fd >= 0) { close(fd); return; }
+    if (errno == ENXIO) unlink(path);
+}
+
 /* 클라이언트 id 의 응답 FIFO 쓰기 끝을 닫는다. 호출하는 쪽이 srv_resp_mtx[id] 를 잡고 있어야 한다 */
 static void drop_resp_locked(uint32_t id)
 {
@@ -505,6 +522,7 @@ void tp_server_close(void)
      */
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
         if (pthread_mutex_trylock(&srv_resp_mtx[i]) != 0) continue;
+        unlink_dead_fifo_locked(i);
         drop_resp_locked(i);             /* 클라이언트의 수신은 EOF 를 받고 끝난다 */
         pthread_mutex_unlock(&srv_resp_mtx[i]);
         pthread_mutex_destroy(&srv_resp_mtx[i]);
@@ -513,6 +531,30 @@ void tp_server_close(void)
     close(srv_wake_fd); srv_wake_fd = -1;
     close(srv_lock_fd); srv_lock_fd = -1;
     srv_opened = 0;
+}
+
+/*
+ * 응답 FIFO 의 읽는 쪽(클라이언트)이 모두 닫히면 쓰기 끝의 poll 이 POLLERR 를 돌려준다. 쓰기 끝이 없으면 이름을
+ * 막히지 않게 열어 본다(읽는 쪽이 없으면 ENXIO). 워커가 그 FIFO 에 쓰는 중(잠금이 잡혀 있음)이면 알 수 없다(-1). 막히지 않는다.
+ */
+int tp_client_alive(uint32_t id)
+{
+    if (id >= MAX_CLIENTS || !srv_opened) return -1;
+    if (pthread_mutex_trylock(&srv_resp_mtx[id]) != 0) return -1;
+    int rc = -1;
+    if (srv_resp_fd[id] >= 0) {
+        struct pollfd p = { .fd = srv_resp_fd[id], .events = POLLOUT };
+        if (poll(&p, 1, 0) >= 0) rc = (p.revents & (POLLERR | POLLHUP | POLLNVAL)) ? 0 : 1;
+    } else {
+        /* 쓰기 끝이 없다(아직 안 열었거나, 받는 쪽이 끝나 EPIPE 로 닫았다): 이름을 막히지 않게 열어 본다 */
+        char path[PATH_LEN];
+        resp_path(path, id);
+        int fd = open(path, O_WRONLY | O_NONBLOCK);
+        if (fd >= 0) { close(fd); rc = 1; }
+        else if (errno == ENXIO || errno == ENOENT) rc = 0;   /* 읽는 쪽이 없다 / FIFO 가 없다 */
+    }
+    pthread_mutex_unlock(&srv_resp_mtx[id]);
+    return rc;
 }
 
 /* ================================================================

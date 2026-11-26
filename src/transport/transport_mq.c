@@ -811,6 +811,13 @@ void tp_server_close(void)
     server_release();
 }
 
+/* 클라이언트 자리 잠금(바이트 LOCK_CLIENT(id))은 그 프로세스가 끝나면 커널이 푼다 */
+int tp_client_alive(uint32_t id)
+{
+    if (id >= MAX_CLIENTS || srv_lock_fd < 0) return -1;
+    return byte_locked(srv_lock_fd, LOCK_CLIENT(id));
+}
+
 /* ================================================================
  * 클라이언트 쪽
  * ================================================================ */
