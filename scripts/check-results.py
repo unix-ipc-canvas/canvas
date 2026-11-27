@@ -125,11 +125,75 @@ def t41():
     finish(0, f'CSV {len(files)}개, {n_rows}줄이 원자료 형식의 {len(want)}열과 같다{note}')
 
 
+def app_header():
+    m = re.search(r'#define\s+APP_CSV_HEADER\s*((?:\\\s*\n\s*"[^"]*"\s*)+)', read('include/util.h'))
+    return ''.join(re.findall(r'"([^"]*)"', m.group(1))).split(',') if m else None
+
+
+def t31():
+    """check-results.py T-31 파일...  2단계 CSV 의 머리글과 칸 수, role 값"""
+    want = app_header()
+    if want is None:
+        finish(1, 'include/util.h 에서 APP_CSV_HEADER 를 찾지 못했다')
+    files = sys.argv[2:]
+    if not files:
+        finish(2, '검사할 CSV 가 없다')
+    problems, n, roles = [], 0, set()
+    for f in files:
+        with open(f, newline='', encoding='utf-8') as fp:
+            rows = list(csv.reader(fp))
+        if not rows or rows[0] != want:
+            problems.append(f'{f}: 머리글이 APP_CSV_HEADER 와 다르다')
+            continue
+        for no, r in enumerate(rows[1:], start=2):
+            if len(r) != len(want):
+                problems.append(f'{f}:{no}: 칸이 {len(r)}개다 ({len(want)}개여야 한다)')
+                continue
+            role = r[want.index('role')]
+            roles.add(role)
+            if role not in ('client', 'clients', 'server'):
+                problems.append(f'{f}:{no}: role 이 {role} 다')
+            n += 1
+    if problems:
+        finish(1, '2단계 CSV 형식이 다르다', problems[:20])
+    finish(0, f'2단계 CSV {len(files)}개, {n}줄({", ".join(sorted(roles))})이 APP_CSV_HEADER {len(want)}열과 같다')
+
+
 def t42():
-    if not glob.glob('results/app/*.csv'):
+    files = sorted(glob.glob('results/app/*.csv'))
+    if not files:
         finish(2, '2단계 원자료 없음 (측정 전)')
-    finish(1, '2단계 원자료 검사는 측정 스크립트와 함께 채운다')
+    want = app_header()
+    problems, conds = [], {}
+    keys = ('experiment', 'clients', 'rooms', 'inflight', 'rate_hz', 'workers', 'lock', 'draw_pct', 'rect', 'snap', 'env')
+    for f in files:
+        with open(f, newline='', encoding='utf-8') as fp:
+            rows = list(csv.DictReader(fp))
+        with open(f, newline='', encoding='utf-8') as fp:
+            head = next(csv.reader(fp), [])
+        if head != want:
+            problems.append(f'{f}: 머리글이 APP_CSV_HEADER 와 다르다')
+            continue
+        for r in rows:
+            if r['role'] != 'clients':
+                continue
+            k = tuple(r[c] for c in keys)
+            conds.setdefault(k, {}).setdefault(r['ipc'], set()).add(r['run'])
+    for k, by_ipc in sorted(conds.items()):
+        for ipc in ('pipe', 'mq', 'shm'):
+            n = len(by_ipc.get(ipc, ()))
+            if n < 30:
+                problems.append(f'{k[0]} {dict(zip(keys[1:], k[1:]))}: {ipc} {n}번 (30번 이상이어야 한다)')
+    exps = {k[0] for k in conds}
+    for need, why in (('target', 'N-2 목표 부하'),):
+        if need not in exps:
+            problems.append(f'{need} 실험이 없다 ({why})')
+    if not any(e.startswith('imp-') for e in exps):
+        problems.append('설계 개선 전후 실험(imp-*)이 없다 (N-6)')
+    if problems:
+        finish(1, '2단계 원자료가 모자라다', problems[:20])
+    finish(0, f'2단계 실험 {len(exps)}개, 조건 {len(conds)}개 × IPC 3개, 조건마다 30번 이상')
 
 
 if __name__ == '__main__':
-    {'T-40': t40, 'T-41': t41, 'T-42': t42}.get(sys.argv[1] if len(sys.argv) > 1 else '', lambda: finish(64, __doc__))()
+    {'T-31': t31, 'T-40': t40, 'T-41': t41, 'T-42': t42}.get(sys.argv[1] if len(sys.argv) > 1 else '', lambda: finish(64, __doc__))()
