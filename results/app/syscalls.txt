@@ -1,0 +1,25 @@
+# scripts/syscall-count.sh 결과 (2026-11-28 04:16:14, 커밋 4b74c25 코드). 요청 하나당 시스템 콜 수 (strace -f -c, 0.05 이상만)
+
+요청 20000개, 클라이언트 옵션: -m 100 -f 16 (그림판 1)
+pipe 서버    futex 4.41 read 2.00 writev 1.00  | 합 7.41
+pipe 클라이언트 read 2.00 futex 2.00 writev 1.00  | 합 5.00
+mq   서버    futex 5.83 msgrcv 1.00 msgsnd 1.00  | 합 7.83
+mq   클라이언트 futex 1.93 msgrcv 1.00 msgsnd 1.00  | 합 3.93
+shm  서버    futex 5.51 semtimedop 4.00  | 합 9.51
+shm  클라이언트 semtimedop 4.00 futex 1.96  | 합 5.96
+
+요청 20000개, 클라이언트 옵션: -m 90 -f 16 (그림판 1)
+pipe 서버    futex 2.23 read 2.00 writev 1.00  | 합 5.23
+pipe 클라이언트 read 2.10 futex 1.99 writev 1.00  | 합 5.09
+mq   서버    futex 2.06 msgsnd 1.78 msgrcv 1.00  | 합 4.83
+mq   클라이언트 futex 1.96 msgrcv 1.78 msgsnd 1.00  | 합 4.74
+shm  서버    futex 5.16 semtimedop 4.00  | 합 9.16
+shm  클라이언트 semtimedop 4.00 futex 1.94  | 합 5.94
+
+요청 5000개, 클라이언트 옵션: -m 0 -f 16 (그림판 1)
+pipe 서버    futex 2.01 read 2.00 writev 1.00  | 합 5.01
+pipe 클라이언트 read 3.00 futex 2.00 writev 1.00  | 합 6.00
+mq   서버    msgsnd 9.00 futex 2.01 msgrcv 1.00  | 합 12.01
+mq   클라이언트 msgrcv 9.00 futex 2.00 msgsnd 1.00  | 합 12.00
+shm  서버    semtimedop 4.00 futex 3.80  | 합 7.80
+shm  클라이언트 semtimedop 4.00 futex 1.98  | 합 5.98

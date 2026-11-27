@@ -1,0 +1,20 @@
+03:47:16 load=0.51 heavy=[] | 
+03:48:16 load=0.98 heavy=[ 976479 173 0 server_mq; 976490 126 0 client_mq;] | 반복 1/30 끝 (cause-workers): 실행 12번, 실패 0번, 15초
+03:49:16 load=2.93 heavy=[] | 반복 5/30 끝 (cause-workers): 실행 60번, 실패 0번, 74초
+03:50:16 load=2.66 heavy=[ 980176 168 0 server_mq; 980187 126 0 client_mq;] | 반복 9/30 끝 (cause-workers): 실행 108번, 실패 0번, 134초
+03:51:16 load=2.52 heavy=[ 981957 187 1 server_shm;] | 반복 13/30 끝 (cause-workers): 실행 156번, 실패 0번, 193초
+03:52:16 load=2.50 heavy=[ 983859 163 0 server_mq; 983870 128 0 client_mq;] | 반복 17/30 끝 (cause-workers): 실행 204번, 실패 0번, 253초
+03:53:16 load=2.74 heavy=[ 985715 186 1 server_shm;] | 반복 21/30 끝 (cause-workers): 실행 252번, 실패 0번, 312초
+03:54:16 load=2.14 heavy=[ 987534 200 0 server_mq; 987547 121 0 client_mq;] | 반복 25/30 끝 (cause-workers): 실행 300번, 실패 0번, 371초
+03:55:16 load=2.49 heavy=[ 989309 175 0 server_shm; 989321 112 0 client_shm;] | 반복 29/30 끝 (cause-workers): 실행 348번, 실패 0번, 431초
+03:56:17 load=4.26 heavy=[ 996497 272 0 server_pipe;] | 반복 2/30 끝 (cause-lockw): 실행 378번, 실패 0번, 489초
+03:57:17 load=6.08 heavy=[1004336 119 0 server_mq;] | 반복 5/30 끝 (cause-lockw): 실행 405번, 실패 0번, 554초
+03:58:17 load=8.86 heavy=[1012245 119 0 server_shm;] | 반복 8/30 끝 (cause-lockw): 실행 432번, 실패 0번, 619초
+03:59:17 load=9.46 heavy=[1020120 152 0 server_shm;] | 반복 10/30 끝 (cause-lockw): 실행 450번, 실패 0번, 662초
+04:00:17 load=12.11 heavy=[1028036 274 0 server_pipe;] | 반복 13/30 끝 (cause-lockw): 실행 477번, 실패 0번, 727초
+04:01:17 load=8.31 heavy=[1035875 297 0 server_mq;] | 반복 16/30 끝 (cause-lockw): 실행 504번, 실패 0번, 792초
+04:02:17 load=7.33 heavy=[1043788 115 0 server_shm;] | 반복 19/30 끝 (cause-lockw): 실행 531번, 실패 0번, 857초
+04:03:17 load=8.52 heavy=[1051692 148 0 server_shm;] | 반복 21/30 끝 (cause-lockw): 실행 549번, 실패 0번, 900초
+04:04:17 load=7.43 heavy=[1059509 466 0 server_pipe;] | 반복 24/30 끝 (cause-lockw): 실행 576번, 실패 0번, 965초
+04:05:17 load=7.24 heavy=[1067346 300 0 server_mq;] | 반복 27/30 끝 (cause-lockw): 실행 603번, 실패 0번, 1030초
+측정 끝

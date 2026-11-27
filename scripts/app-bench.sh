@@ -13,6 +13,11 @@
 #   imp-scale                     개선 전후: mq 응답 큐 8개 + 입장 제한, shm 클라이언트별 요청 링, 클라이언트 1~1024
 #   imp-target                    개선 뒤 목표 부하(N-2)
 #   mem-shm                       메모리(N-5): shm 응답 링 칸 수 34(응답 2개) / 17(응답 1개), 동시 요청 1·4
+#   cause-workers                 원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 서버 워커 수만 1·2·4·8 로 바꾼다
+#   cause-lockw                   원인 확인(P6, 본 측정 뒤 추가): 그림판 전체 mutex, 클라이언트 64 에서 워커 수만 1·4·16 으로 바꾼다
+#   cause-mix                     원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 요청 종류만 DRAW만 / SNAPSHOT만으로 바꾼다
+#   cause-ring                    원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 shm 응답 링 칸 수만 34·68·136 으로 바꾼다
+#                                 (넷 다 기본 목록에 없다. EXPS="cause-workers cause-lockw cause-mix cause-ring" 로 따로 돌린다)
 #
 # 실행 하나: 서버를 새로 띄우고 → 실행기가 클라이언트 N개를 워밍업시킨 뒤 함께 시작 → 끝나면 검증기로 정답을 만들어
 # 두고 서버를 SIGINT 로 끝낸다. 서버는 정답과 그림판 체크섬을 비교해 CSV 서버 줄의 checksum_ok 에 남긴다.
@@ -53,6 +58,10 @@ conds_for() {
                  for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done ;;
     imp-target)  echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
     mem-shm)     for f in 1 4; do for c in 34 17; do echo "-K 8|1024|-m 90 -f $f|3|OSP_SHM_REQ=per OSP_SHM_RESP_CHUNKS=$c"; done; done ;;
+    cause-workers) for wk in 1 2 4 8; do echo "-K 1 -w $wk|1|-f 16|1|"; done ;;
+    cause-lockw)   for wk in 1 4 16; do echo "-K 1 -l room -w $wk|64|-f 1|2|"; done ;;
+    cause-mix)     echo "-K 1|1|-m 100 -f 16|1|"; echo "-K 1|1|-m 0 -f 16|1|" ;;
+    cause-ring)    for c in 34 68 136; do echo "-K 1|1|-f 16|1|OSP_SHM_RESP_CHUNKS=$c"; done ;;
     *)      v="COND_${1//-/_}"; [ -n "${!v:-}" ] && printf '%s\n' "${!v}" | tr ';' '\n' ;;
     esac
 }
@@ -65,7 +74,7 @@ ipcs_for() {
     case $1 in
     imp-mq-q|imp-mq-req)  echo "mq" ;;
     imp-scale|imp-target) echo "mq shm" ;;
-    mem-shm)              echo "shm" ;;
+    mem-shm|cause-ring)   echo "shm" ;;
     *)                    echo "$IPCS" ;;
     esac
 }
