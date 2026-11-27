@@ -4,7 +4,8 @@
  * 채널 (docs/design/README.md#채널)
  *   요청 채널  /tmp/osproject_<팀>_req          모든 클라이언트 → 서버 (N:1)
  *   응답 채널  /tmp/osproject_<팀>_resp_<id>    서버 → 클라이언트 id (클라이언트마다 1개)
- *   잠금 파일  /tmp/osproject_<팀>_req.lock     PIPE_BUF 를 넘는 요청을 보낼 때만 쓰는 송신 잠금
+ *   잠금 파일  /tmp/osproject_<팀>_req.lock     PIPE_BUF 를 넘는 요청을 보낼 때만 쓰는 송신 잠금(fcntl),
+ *                                                서버·클라이언트가 FIFO 를 만들고 여는 시작 구간을 묶는 시작 잠금(flock)
  *
  * 메시지 하나 = msg_hdr_t + payload_len 바이트. 받는 쪽은 머리를 먼저 읽고 payload 를 끝까지 읽는다.
  *
@@ -24,6 +25,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -135,6 +137,29 @@ static int make_fifo(const char *path)
     if (used == 1) { errno = EADDRINUSE; return -1; }
     if (unlink(path) < 0 && errno != ENOENT) return -1;
     return mkfifo(path, 0600);
+}
+
+/*
+ * 시작 잠금. make_fifo 의 "읽는 쪽이 없으면 남은 파일" 판정은 만든 쪽이 읽기 끝을 열기 전까지 틀릴 수 있다.
+ * 같은 이름을 쓰는 두 프로세스가 같은 순간에 뜨면 한쪽이 다른 쪽이 막 만든 FIFO 를 지워
+ * 둘 다 뜨거나(서버 둘이 요청 FIFO 하나를 나눠 읽는다) 둘 다 실패한다.
+ * 판정 → 지우고 다시 만들기 → 읽기 끝 열기를 잠금 파일의 flock 으로 묶어 한 번에 하나만 하게 한다.
+ * 읽기 끝을 연 뒤에는 읽는 쪽이 있으므로 뒤에 오는 쪽은 EADDRINUSE 로 판정한다.
+ * DECISION: 송신 잠금(fcntl 레코드 잠금)과 같은 파일이지만 Linux 의 flock 과 fcntl 잠금은 서로 독립이라
+ * (로컬 파일시스템) 시작 잠금이 큰 요청의 송신을 막지 않는다. 프로세스가 죽으면 커널이 flock 을 풀어 준다.
+ */
+static int start_lock(int fd)
+{
+    while (flock(fd, LOCK_EX) < 0)
+        if (errno != EINTR) return -1;
+    return 0;
+}
+
+static void start_unlock(int fd)
+{
+    int e = errno;
+    flock(fd, LOCK_UN);
+    errno = e;
 }
 
 /*
@@ -270,7 +295,18 @@ int tp_server_open(void)
 
     ignore_sigpipe();
     raise_nofile();
-    if (make_fifo(rp) < 0) return -1;           /* 서버가 이미 떠 있으면 EADDRINUSE */
+
+    /* 잠금 파일을 먼저 만들고 시작 잠금을 건다. 클라이언트는 요청 FIFO 에 읽는 쪽이 생긴 뒤에야 이 파일을 연다 */
+    srv_lock_fd = open(lp, O_RDWR | O_CREAT, 0600);
+    if (srv_lock_fd < 0) return -1;
+    if (start_lock(srv_lock_fd) < 0 || make_fifo(rp) < 0) {
+        /* 서버가 이미 떠 있으면 EADDRINUSE. 그 서버의 FIFO·잠금 파일이므로 지우지 않는다. 닫으면 flock 도 풀린다 */
+        int e = errno;
+        close(srv_lock_fd);
+        srv_lock_fd = -1;
+        errno = e;
+        return -1;
+    }
 
     /*
      * O_RDWR 로 연다. 서버 자신이 쓰는 쪽도 되므로
@@ -285,9 +321,7 @@ int tp_server_open(void)
     /* 깨우기 전용 쓰기 끝. 막히지 않게 따로 연다 (O_NONBLOCK 은 열린 파일마다라 srv_req_fd 의 읽기에는 영향이 없다) */
     srv_wake_fd = open(rp, O_WRONLY | O_NONBLOCK);
     if (srv_wake_fd < 0) goto fail;
-
-    srv_lock_fd = open(lp, O_RDWR | O_CREAT, 0600);
-    if (srv_lock_fd < 0) goto fail;
+    start_unlock(srv_lock_fd);                  /* 읽는 쪽이 생겼다. 뒤에 뜨는 서버는 EADDRINUSE 로 판정한다 */
 
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
         srv_resp_fd[i] = -1;
@@ -301,8 +335,10 @@ fail:;
     int e = errno;
     if (srv_req_fd >= 0) { close(srv_req_fd); srv_req_fd = -1; }
     if (srv_wake_fd >= 0) { close(srv_wake_fd); srv_wake_fd = -1; }
+    /* 시작 잠금을 쥔 채로 내가 만든 FIFO 와 잠금 파일을 지운 뒤 닫는다(flock 이 풀린다) */
     unlink(rp);
     unlink(lp);
+    close(srv_lock_fd); srv_lock_fd = -1;
     errno = e;
     return -1;
 }
@@ -513,11 +549,25 @@ int tp_client_open(uint32_t client_id)
         return -1;
     }
 
-    if (make_fifo(mp) < 0) return -1;            /* 같은 번호가 실행 중이면 EADDRINUSE */
+    /* 잠금 파일은 서버가 요청 FIFO 보다 먼저 만든다. 시작 잠금을 쥐고 내 응답 FIFO 를 만들어 읽기 끝까지 연다 */
+    cli_lock_fd = open(lp, O_RDWR);
+    if (cli_lock_fd < 0) {
+        if (errno == ENOENT) errno = ECONNREFUSED;
+        return -1;
+    }
+    if (start_lock(cli_lock_fd) < 0 || make_fifo(mp) < 0) {
+        /* 같은 번호가 실행 중이면 EADDRINUSE. 그 클라이언트의 FIFO 이므로 지우지 않는다. 닫으면 flock 도 풀린다 */
+        int e = errno;
+        close(cli_lock_fd);
+        cli_lock_fd = -1;
+        errno = e;
+        return -1;
+    }
 
     int keeper = -1;
     cli_resp_fd = open(mp, O_RDONLY | O_NONBLOCK);
     if (cli_resp_fd < 0) goto fail;
+    start_unlock(cli_lock_fd);                   /* 읽는 쪽이 생겼다. 같은 번호로 뒤에 오는 쪽은 EADDRINUSE 로 판정한다 */
     keeper = open(mp, O_WRONLY | O_NONBLOCK);
     if (keeper < 0) goto fail;
     if (clear_nonblock(cli_resp_fd) < 0) goto fail;
@@ -529,12 +579,6 @@ int tp_client_open(uint32_t client_id)
     }
     if (clear_nonblock(cli_req_fd) < 0) goto fail;
 
-    cli_lock_fd = open(lp, O_RDWR);
-    if (cli_lock_fd < 0) {
-        if (errno == ENOENT) errno = ECONNREFUSED;
-        goto fail;
-    }
-
     atomic_store(&cli_keeper_fd, keeper);
     cli_id = client_id;
     cli_opened = 1;
@@ -542,10 +586,15 @@ int tp_client_open(uint32_t client_id)
 
 fail:;
     int e = errno;
+    /*
+     * 이름을 먼저 지운다 (tp_client_close 와 같은 순서). 읽기 끝을 닫은 뒤에 지우면 그 사이에 같은 번호로 뜬 쪽이
+     * 이 FIFO 를 남은 파일로 보고 새로 만든 것을 지우게 된다. 시작 잠금을 아직 쥐고 있으면 닫을 때 풀린다.
+     */
+    unlink(mp);
     if (keeper >= 0) close(keeper);
     if (cli_resp_fd >= 0) { close(cli_resp_fd); cli_resp_fd = -1; }
     if (cli_req_fd >= 0)  { close(cli_req_fd);  cli_req_fd = -1; }
-    unlink(mp);
+    close(cli_lock_fd); cli_lock_fd = -1;
     errno = e;
     return -1;
 }
