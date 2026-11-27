@@ -125,6 +125,19 @@ sequenceDiagram
 | `lock` | 락 `rw` / `room` × 클라이언트 16, 64, 256 | 기준 혼합, 동시 요청 1, 그림판 1 | 30 | P6 |
 | `target` | (사람 속도 부하) 클라이언트마다 `-H 67`, 동시 요청 4 | 클라이언트 1024, 그림판 8 | 30 | P8, 요구사항 N-2 |
 
+원인 확인과 설계 개선 실험(11/28 추가). 구현을 마친 뒤 시험 삼아 돌린 측정(원자료로 쓰지 않음)에서 클라이언트 1024개의 mq·shm 처리량이 64개일 때보다 크게 떨어져, 그 원인을 가리는 실험과 개선 전후 실험을 본 측정에 함께 넣었다. 개선은 서버 환경 변수로 켜고 끄므로 같은 실행 파일로 잰다(기본값 = 처음 설계).
+
+| 실험 (`-e`) | 바꾸는 요인 | 고정한 것 | IPC | 확인하는 것 |
+| --- | --- | --- | --- | --- |
+| `cause-procs` | 클라이언트 64 × 동시 요청 16 / 256 × 4 / 1024 × 1 | 띄운 요청 수 1024, 기준 혼합, 그림판 8 | 셋 | 떨어지는 원인이 요청 양인지, 기다리는 프로세스 수인지 |
+| `imp-mq-q` | mq 응답 큐 수 Q = 1, 2, 4, 8 (`OSP_MQ_RESP_Q`) | 클라이언트 1024, 기준 혼합, 동시 요청 1 | mq | 응답 큐 하나에 수신자가 몰리는 것이 원인인지 + 개선 1 |
+| `imp-mq-req` | 요청 큐 용량 16,384B / 8,192B(`OSP_MQ_REQ_QBYTES`) × 입장 제한 없음 / 있음(`OSP_MQ_ADMIT=1`) | 응답 큐 8개, 클라이언트 256(용량 8,192B면 띄운 요청 > 큐에 들어가는 요청), 1024 | mq | 응답 큐를 나눈 뒤 드러난 요청 큐 병목의 원인(가득 찬 큐에서 막힌 송신자를 커널이 한꺼번에 깨움) + 개선 2 |
+| `imp-scale` | 처음 설계(클라이언트 1024) / 개선한 설계(클라이언트 1, 64, 256, 1024) | 기준 혼합, 동시 요청 1, 그림판 8 | mq, shm | 개선 전후(요구사항 N-6), 클라이언트가 적을 때 손해가 없는지 |
+| `imp-target` | (사람 속도 부하) 개선한 설계 | `target`과 같음 | mq, shm | 개선 뒤 요구사항 N-2 |
+| `mem-shm` | shm 응답 링 칸 수 34(응답 2개) / 17(응답 1개) × 동시 요청 1, 4 | 클라이언트 1024, 개선한 요청 링 | shm | 메모리 절감 방안 2(요구사항 N-5, [구현 계획의 미결정](../design/plan.md#리스크와-미결정)) |
+
+개선한 설계는 mq 응답 큐 8개 + 요청 큐 입장 제한(`OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1`)과 shm 클라이언트별 요청 링(`OSP_SHM_REQ=per`)이다. 설계는 [설계 명세의 변경 기록](../design/README.md#변경-기록)에, 결과는 [2단계 측정 결과](stage2.md)에 있다.
+
 공통 조건: 서버 워커 4, 타일 64, 측정 시간 2초(`-d 2`, `scale`·`target`의 클라이언트 256·1024는 3초), 클라이언트마다 워밍업 요청 200개(클라이언트 256 이상은 50개).
 
 실행 한 번의 순서(`scripts/app-bench.sh`)
@@ -202,6 +215,20 @@ utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
 - 해당 없는 칸은 비운다. 1단계에는 `workers`부터 `snap`까지와 구간별 시간이 없다.
 - 클라이언트 프로세스 여럿이 같은 파일에 써도 줄이 섞이지 않게 `csv_append`(`util.c`)가 파일 잠금을 걸고 쓴다. 2단계 `client.c`도 이 함수를 쓴다. 머리글이 다른 파일(열을 바꾸기 전에 잰 결과)에는 덧붙이지 않고 실패한다.
 - 1단계 파일: `results/bench_latency.csv`, `results/bench_throughput.csv`, `results/bench_clock.csv`, 측정 환경 `results/bench_env.txt`. 처음 측정(반복 5번, 성능 예측의 근거)은 `results/` 바로 아래, 반복 20번으로 다시 잰 것은 `results/stage1-r20/`, 원인 확인 실험은 `results/exp-<실험>/`에 같은 이름으로 둔다([1단계 측정 결과](stage1.md#측정-기록)).
+- 2단계 CSV 의 열은 `include/util.h`의 `APP_CSV_HEADER`다. 실행 하나가 줄 두 개다: `role=clients`(실행기가 모든 클라이언트를 합친 줄), `role=server`(서버의 측정 구간 줄). 클라이언트를 혼자 돌려 `-o`로 쓰면 `role=client`.
+
+```text
+stage,ipc,role,experiment,commit,run,
+clients,rooms,inflight,rate_hz,workers,lock,tile,draw_pct,rect,snap,
+n,errors,elapsed_s,thr_req_s,thr_mb_s,
+lat_mean_us,lat_p50_us,lat_p99_us,lat_max_us,
+draw_n,draw_mean_us,draw_p50_us,draw_p99_us,draw_max_us,
+snap_n,snap_mean_us,snap_p50_us,snap_p99_us,snap_max_us,
+req_us,queue_us,lock_us,work_us,resp_us,
+utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb,
+ipc_cap_kb,ipc_rss_kb,ipc_min_chan,checksum_ok,env
+```
+
 - 2단계 파일: `results/app/<실험>.csv`(실행마다 클라이언트 줄 하나와 서버 줄 하나), 측정 환경 `results/app/app_env.txt`. 열은 `include/util.h`의 `APP_CSV_HEADER`이고 [2단계 실험](#2단계-실험)의 표와 같은 뜻이다. 원인 확인·설계 개선 실험은 `results/app/exp-<실험>.csv`다.
 - 실험의 비교 표는 `scripts/compare-bench.py`가 `docs/assets/bench/experiments.md`로 만든다.
 - 그래프는 이 CSV에서만 만든다. 축 이름과 단위(µs, ms, MB/s)를 표시하고, 같은 조건의 세 IPC를 한 그래프에 그린다.

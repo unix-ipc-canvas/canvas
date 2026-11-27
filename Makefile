@@ -1,8 +1,8 @@
-# 공유 캔버스 서버 - UNIX시스템프로그래밍 설계과제
+# 다중 그림판 공유 캔버스 서버 - UNIX시스템프로그래밍 설계과제 2팀
 #
 #   make            전체 빌드 (소스가 있는 것만)
 #   make bench      1단계 벤치마크 (pipe, mq, shm, 익명 pipe upipe)
-#   make app        2단계 응용 (서버, 클라이언트) 3종
+#   make app        2단계 응용 3종 (서버, 부하 클라이언트, 그리기 클라이언트) + 실행기 + 검증기
 #   make pipe       pipe 버전만   (mq, shm, upipe 도 같음. upipe 는 벤치마크만)
 #   make tptest     전송 계층 시험 도구 3종 (scripts/test-transport.sh 가 쓴다)
 #   make check      헤더 문법 검사 + 빌드 가능한 대상 출력
@@ -26,7 +26,7 @@ BIN  := bin
 OBJ  := build
 
 # main 이 들어 있는 파일을 뺀 공통 모듈
-MAINS      := src/common/server.c src/common/client.c src/common/verify.c
+MAINS      := src/common/server.c src/common/client.c src/common/draw.c src/common/verify.c src/common/loadgen.c
 COMMON_SRC := $(filter-out $(MAINS),$(wildcard src/common/*.c))
 COMMON_OBJ := $(COMMON_SRC:%.c=$(OBJ)/%.o)
 
@@ -35,14 +35,15 @@ HAVE   := $(foreach i,$(IPCS),$(if $(wildcard src/transport/transport_$(i).c),$(
 HAVE_B := $(HAVE) $(foreach i,$(BENCH_ONLY),$(if $(wildcard src/transport/transport_$(i).c),$(i)))
 BENCH  := $(if $(wildcard src/bench/bench.c),$(HAVE_B:%=$(BIN)/bench_%))
 APP    := $(if $(wildcard src/common/server.c),$(HAVE:%=$(BIN)/server_%)) \
-          $(if $(wildcard src/common/client.c),$(HAVE:%=$(BIN)/client_%))
-VERIFY := $(if $(wildcard src/common/verify.c),$(BIN)/verify)
+          $(if $(wildcard src/common/client.c),$(HAVE:%=$(BIN)/client_%)) \
+          $(if $(wildcard src/common/draw.c),$(HAVE:%=$(BIN)/draw_%))
+VERIFY := $(if $(wildcard src/common/verify.c),$(BIN)/verify) $(if $(wildcard src/common/loadgen.c),$(BIN)/loadgen)
 TPTEST := $(if $(wildcard src/test/tptest.c),$(HAVE:%=$(BIN)/tptest_%))
 
 .PHONY: all bench app tptest check test clean ipcclean dist
 all: check bench app $(VERIFY) $(TPTEST)
 bench: $(BENCH)
-app: $(APP)
+app: $(APP) $(VERIFY)
 tptest: $(TPTEST)
 
 define IPC_RULES
@@ -58,12 +59,18 @@ $$(BIN)/server_$(1): $$(OBJ)/src/common/server.o $$(OBJ)/src/transport/transport
 $$(BIN)/client_$(1): $$(OBJ)/src/common/client.o $$(OBJ)/src/transport/transport_$(1).o $$(COMMON_OBJ) | $$(BIN)
 	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
 
+$$(BIN)/draw_$(1): $$(OBJ)/src/common/draw.o $$(OBJ)/src/transport/transport_$(1).o $$(COMMON_OBJ) | $$(BIN)
+	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
+
 $$(BIN)/tptest_$(1): $$(OBJ)/src/test/tptest.o $$(OBJ)/src/transport/transport_$(1).o $$(COMMON_OBJ) | $$(BIN)
 	$$(CC) $$(CFLAGS) -o $$@ $$^ $$(LDLIBS)
 endef
 $(foreach i,$(IPCS) $(BENCH_ONLY),$(eval $(call IPC_RULES,$(i))))
 
 $(BIN)/verify: $(OBJ)/src/common/verify.o $(COMMON_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BIN)/loadgen: $(OBJ)/src/common/loadgen.o $(COMMON_OBJ) | $(BIN)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 $(OBJ)/%.o: %.c $(wildcard include/*.h)
@@ -87,7 +94,7 @@ ipcclean:
 	@for y in 0 1 2 3 4 5 6 7 8 9; do \
 	  k=$$((60000 + $(TEAM_NO) * 10 + y)); \
 	  ipcrm -Q $$k 2>/dev/null; ipcrm -M $$k 2>/dev/null; ipcrm -S $$k 2>/dev/null; \
-	done; rm -f /tmp/osproject_$(TEAM_NO)_*; echo "정리 완료. 확인: ipcs"
+	done; rm -rf /tmp/osproject_$(TEAM_NO)_*; echo "정리 완료. 확인: ipcs"
 
 dist: clean
 	tar cvf osproject_$(TEAM_NO).tar Makefile readme.txt include src scripts results

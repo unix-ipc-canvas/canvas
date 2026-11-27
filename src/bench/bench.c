@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -220,6 +221,14 @@ static int run_server(const char *dir, pid_t driver)
     sigaddset(&set, SIGTERM);
     sigaddset(&set, SIG_MARK);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
+
+    /*
+     * 조정 프로세스가 먼저 죽으면(kill, kill -9) 아무도 서버를 끝내지 않아 전송 계층 자원(mq 큐 등)이 남는다.
+     * 부모가 죽을 때 SIGTERM 을 받게 해 두면 admin 스레드가 평소처럼 끝내고 자원을 정리한다.
+     * prctl 전에 이미 부모가 죽었을 수 있으므로 getppid 로 한 번 더 본다. SIGTERM 은 막혀 있어 보류된다.
+     */
+    prctl(PR_SET_PDEATHSIG, SIGTERM);
+    if (getppid() != driver) raise(SIGTERM);
 
     s.buf = malloc(MAX_PAYLOAD);
     if (!s.buf) {
@@ -796,6 +805,19 @@ static int run_driver(const cfg_t *cfg)
     if (!ch || !ready) { fprintf(stderr, "bench: 메모리 부족\n"); return 1; }
     fflush(NULL);
 
+    /*
+     * 서버 자식이 물려받을 전송 계층 한도. 1단계 메시지 크기(머리 + MAX_PAYLOAD)는 그대로이고 클라이언트 수만 알린다.
+     * 1단계 측정 때(2df6b9c)는 이 호출이 없었고 shm 응답 링이 늘 16개였다. 링 수만 다르고 링 크기와 송수신은 같다.
+     */
+    if (tp_set_limits(cfg->clients < 16 ? 16 : cfg->clients, sizeof(msg_hdr_t) + MAX_PAYLOAD,
+                      sizeof(msg_hdr_t) + MAX_PAYLOAD) < 0) {
+        fprintf(stderr, "bench: tp_set_limits: 클라이언트 수 %u\n", cfg->clients);
+        remove_dir(dir, cfg->clients);
+        free(ch);
+        free(ready);
+        return 1;
+    }
+
     /* 익명 pipe 버전은 여기서 채널을 만들어 자식에게 물려준다. 다른 버전은 아무것도 하지 않는다 */
     if (tp_prefork() < 0) {
         char eb[128];
@@ -817,6 +839,9 @@ static int run_driver(const cfg_t *cfg)
         }
         if (p == 0) {
             if (i == 0) _exit(run_server(dir, driver));
+            /* 클라이언트는 정리할 서버 자원이 없으므로 조정 프로세스가 죽으면 바로 끝난다 */
+            prctl(PR_SET_PDEATHSIG, SIGKILL);
+            if (getppid() != driver) _exit(1);
             uint64_t n = cfg->n / cfg->clients + (i - 1 < cfg->n % cfg->clients ? 1 : 0);
             _exit(run_client(cfg, i - 1, n, dir, driver));
         }

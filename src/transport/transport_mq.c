@@ -4,7 +4,10 @@
  * 채널 (docs/design/README.md#채널)
  *   요청 채널  key IPC_KEY(0) 큐 1개     모든 클라이언트 → 서버 (N:1)
  *   응답 채널  key IPC_KEY(1) 큐 1개     서버 → 클라이언트. mtype = client_id + 1 로 받는 쪽을 나눈다
- *   잠금 파일  /tmp/osproject_<팀>_mq.lock  서버와 클라이언트가 살아 있는지 알리는 표시
+ *              (개선: 환경 변수 OSP_MQ_RESP_Q=Q 로 서버를 띄우면 key IPC_KEY(1)~IPC_KEY(Q) 의 큐 Q개로 나누고
+ *               클라이언트 id 는 큐 id % Q 를 쓴다. Q 는 1~8, 기본 1 = 처음 설계)
+ *   잠금 파일  /tmp/osproject_<팀>_mq.lock  서버와 클라이언트가 살아 있는지 알리는 표시.
+ *              CONF_OFF 위치에 서버가 설정(응답 큐 수 Q, 입장 제한)을 적고 클라이언트가 읽는다
  *
  * 조각
  *   System V 메시지 하나는 msgmax(기본 8192B)를 넘지 못한다. 그래서 메시지 하나(msg_hdr_t + payload)를
@@ -27,6 +30,19 @@
  *
  * DECISION: 응답 큐는 클라이언트마다 두지 않고 하나를 mtype 으로 나눈다. key 가 60020~60029 의 10개뿐이라
  *   클라이언트 16개에 큐를 하나씩 줄 수 없다 (shm 버전이 4개를 쓴다).
+ * DECISION (11/28 개선): 클라이언트 1024개에서 응답 큐 하나가 병목이었다. 큐 하나에 받는 쪽 1024개가 기다리면
+ *   msgsnd 마다 커널이 기다리는 수신자 목록에서 mtype 이 맞는 쪽을 찾는다(목록 길이에 비례). 남은 key 로 응답 큐를
+ *   Q개(최대 8)로 나눠 큐마다 기다리는 수신자와 큐 잠금을 1/Q 로 줄인다. 메시지 큐 key 는 shm·세마포어 key 와
+ *   이름 공간이 달라 shm 버전과 함께 떠도 겹치지 않는다. 측정 근거는 docs/measurement/stage2.md.
+ * DECISION (11/28 개선 2): 요청 큐 입장 제한 (서버를 OSP_MQ_ADMIT=1 로 띄울 때).
+ *   응답 큐를 나누자 요청 큐가 다음 병목이 됐다. 띄운 요청이 요청 큐 용량(16,384B = 48B 요청 341개)보다 많으면
+ *   msgsnd 에서 막힌 클라이언트가 쌓이고, 커널은 메시지 하나가 빠질 때마다 그 자리에 들어갈 수 있는 송신자를
+ *   모두 깨운다(ipc/msg.c 의 ss_wakeup). 하나만 들어가고 나머지는 다시 잠들어 컨텍스트 스위치가 폭증한다(thundering herd).
+ *   세마포어 하나(key IPC_KEY(9), 값 = 큐 용량 / ADMIT_UNIT)를 빈 자리 수로 두고, 보내는 쪽이 조각 크기만큼 먼저 얻은 뒤
+ *   msgsnd 하고 서버가 꺼낸 만큼 돌려준다(유한 버퍼의 빈 칸 세마포어). 그러면 msgsnd 는 막히지 않고, 기다림은
+ *   세마포어에서 일어나는데 커널은 세마포어 하나짜리 semop 은 값이 0 이 되는 순간 깨우기를 멈춘다(하나씩 깨운다).
+ *   SEM_UNDO 는 쓰지 않는다(돌려주는 쪽이 서버라 보내는 쪽의 되돌리기 기록이 계속 쌓인다). 얻은 뒤 msgsnd 전에
+ *   죽은 클라이언트의 몫(조각 하나)만큼 용량이 줄어드는 것은 받아들인다.
  * DECISION: msgsnd 는 mtype 이 앞에 붙은 버퍼를 요구하므로 보낼 때와 받을 때 조각 버퍼를 거쳐 한 번씩 복사한다.
  */
 #define _GNU_SOURCE             /* F_OFD_SETLK, F_OFD_GETLK */
@@ -43,6 +59,7 @@
 #include <string.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
+#include <sys/sem.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
@@ -51,7 +68,23 @@
 #include "transport.h"
 
 #define KEY_REQ   IPC_KEY(0)
-#define KEY_RESP  IPC_KEY(1)
+#define KEY_RESP(s) IPC_KEY(1 + (s))             /* 응답 큐 s (0 ~ RESP_Q_MAX-1) */
+#define RESP_Q_MAX 8u
+#define KEY_ADMIT  IPC_KEY(9)                    /* 요청 큐 입장 제한 세마포어 (OSP_MQ_ADMIT=1) */
+#define ADMIT_UNIT 64u                           /* 입장 단위(바이트). 응용의 요청 조각(48B)이 1단위다 */
+#define CONF_OFF  ((off_t)4096)                  /* 잠금 파일에서 설정(conf_t)을 적는 자리. 잠금 바이트(0~1024) 뒤 */
+
+union semun {                                   /* semctl 의 넷째 인자 (호출하는 쪽이 정의한다) */
+    int              val;
+    struct semid_ds *buf;
+    unsigned short  *array;
+};
+
+/* 서버가 잠금 파일에 적고 클라이언트가 읽는 설정 */
+typedef struct {
+    uint32_t nresp;          /* 응답 큐 수 Q */
+    uint32_t admit;          /* 입장 제한 세마포어의 처음 값(단위 수). 0 이면 쓰지 않는다 */
+} conf_t;
 
 #define PATH_LEN 64
 #define DEFAULT_MSGMAX 8192u
@@ -124,12 +157,31 @@ static frag_t *frag_alloc(size_t chunk) { return malloc(sizeof(long) + chunk); }
 
 /* ---- 조각 보내기 ---- */
 
+/* 조각 길이(mtype 뺀 바이트)의 입장 단위 수 */
+static short admit_units(size_t len) { return (short)((len + ADMIT_UNIT - 1) / ADMIT_UNIT); }
+
+/*
+ * 입장 세마포어 semop (하나짜리). 세마포어 집합이 지워졌으면(서버가 끝났다) -1, errno = EPIPE.
+ */
+static int admit_op(int semid, short delta)
+{
+    struct sembuf op = { 0, delta, 0 };
+    for (;;) {
+        if (semop(semid, &op, 1) == 0) return 0;
+        if (errno == EINTR) continue;
+        if (errno == EIDRM || errno == EINVAL) errno = EPIPE;
+        return -1;
+    }
+}
+
 /*
  * 조각 하나를 큐에 넣는다. 큐가 가득 차 있으면 자리가 날 때까지 기다린다.
  * dead 는 감시 스레드가 "받는 쪽이 죽었다"고 알리는 표시다 (없으면 NULL). 켜져 있으면 -1, errno = EPIPE.
+ * admit >= 0 이면(요청 큐 입장 제한) 조각 크기만큼 입장 세마포어를 먼저 얻는다. 그 뒤의 msgsnd 는 자리가 있어 막히지 않는다.
  */
-static int put_frag(int qid, const frag_t *f, size_t len, const atomic_bool *dead)
+static int put_frag(int qid, const frag_t *f, size_t len, const atomic_bool *dead, int admit)
 {
+    if (admit >= 0 && admit_op(admit, (short)-admit_units(len)) < 0) return -1;
     for (;;) {
         if (dead && atomic_load(dead)) { errno = EPIPE; return -1; }
         if (msgsnd(qid, f, len, 0) == 0) return 0;
@@ -139,9 +191,9 @@ static int put_frag(int qid, const frag_t *f, size_t len, const atomic_bool *dea
     }
 }
 
-/* 메시지 하나를 조각으로 나눠 보낸다. f 는 chunk 바이트를 담을 수 있는 조각 버퍼다 */
+/* 메시지 하나를 조각으로 나눠 보낸다. f 는 chunk 바이트를 담을 수 있는 조각 버퍼다. admit 은 put_frag 의 설명 */
 static int send_msg(int qid, long mtype, frag_t *f, size_t chunk,
-                    const msg_hdr_t *hdr, const void *payload, const atomic_bool *dead)
+                    const msg_hdr_t *hdr, const void *payload, const atomic_bool *dead, int admit)
 {
     const char *p = payload;
     size_t left = hdr->payload_len;
@@ -156,7 +208,7 @@ static int send_msg(int qid, long mtype, frag_t *f, size_t chunk,
     size_t len = sizeof *hdr + k;
 
     for (;;) {
-        if (put_frag(qid, f, FRAG_HDR + len, dead) < 0) return -1;
+        if (put_frag(qid, f, FRAG_HDR + len, dead, admit) < 0) return -1;
         p += k;
         left -= k;
         if (left == 0) return 0;
@@ -262,7 +314,9 @@ void tp_postfork(void) { }
  * ================================================================ */
 
 static int srv_req_q = -1;
-static int srv_resp_q = -1;
+static int srv_resp_q[RESP_Q_MAX] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+static uint32_t srv_nresp = 1;                   /* 응답 큐 수 Q. 열 때 OSP_MQ_RESP_Q 로 정한다 */
+static int srv_admit_sem = -1;                   /* 요청 큐 입장 제한 세마포어 (OSP_MQ_ADMIT=1). 없으면 -1 */
 static int srv_lock_fd = -1;
 static size_t srv_limit;                         /* 받는 조각 버퍼 크기 */
 static size_t srv_chunk;                         /* 응답 큐에 보내는 조각 크기 */
@@ -272,15 +326,27 @@ static size_t srv_sbuf_stride;
 static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static atomic_bool srv_opened;
+/*
+ * 깨우기(tp_server_wake)와 닫기(tp_server_close)를 한 번에 하나만 하게 한다.
+ * 수신 스레드는 깨우기 메시지 없이 srv_stopping 만 보고 먼저 끝날 수 있다. 그러면 깨우는 스레드가 아직 msgsnd 앞에
+ * 있는 동안 main 이 닫기까지 가서, 깨우기가 읽는 srv_req_q 를 닫기가 동기화 없이 -1 로 바꿨다(TSan 이 보고한 경쟁).
+ * 닫기는 이 mutex 안에서 srv_opened 를 내리므로, 그 뒤의 깨우기는 큐를 건드리지 않는다.
+ * 깨우기는 IPC_NOWAIT 로 보내 쥔 채 막히지 않는다.
+ */
+static pthread_mutex_t srv_wake_mtx = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool srv_sent[MAX_CLIENTS];        /* 응답을 보낸 적이 있다. 감시 스레드가 볼 대상 */
 static atomic_bool srv_dead[MAX_CLIENTS];        /* 감시 스레드가 죽었다고 본 클라이언트 */
 static watch_t srv_watch;
 
 /*
  * 여러 조각으로 온 요청을 클라이언트별로 붙이는 자리.
- * DECISION: 클라이언트마다 MAX_PAYLOAD 를 한 번에 잡아 둔다 (16MB). 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
- *   쓰지 않은 페이지는 실제 메모리를 차지하지 않는다. 응용의 요청은 모두 조각 하나라서 이 자리를 건드리지 않는다.
+ * DECISION: 클라이언트마다 요청 최대 크기를 한 번에 잡아 둔다. 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
+ *   쓰지 않은 페이지는 실제 메모리를 차지하지 않는다. 1단계 벤치(tp_set_limits 를 부르지 않음)는 클라이언트 16개 ×
+ *   MAX_PAYLOAD = 16MB 다. 2단계 응용은 요청이 모두 조각 하나라 이 자리를 잡지 않는다(11/27 재수행, 클라이언트 1024개).
  */
+static uint32_t lim_clients = 16;                /* tp_set_limits. 부르지 않으면 1단계 값 */
+static size_t   lim_req = sizeof(msg_hdr_t) + MAX_PAYLOAD;
+static size_t   srv_asm_stride;                  /* 클라이언트 하나의 붙이는 자리. 0 이면 여러 조각 요청을 받지 않는다 */
 static char *srv_asm_buf;
 static struct {
     msg_hdr_t hdr;
@@ -289,6 +355,31 @@ static struct {
 } srv_asm[MAX_CLIENTS];
 
 static frag_t *srv_sbuf_of(uint32_t id) { return (frag_t *)(srv_sbuf + (size_t)id * srv_sbuf_stride); }
+static int srv_resp_of(uint32_t id) { return srv_resp_q[id % srv_nresp]; }
+
+/* OSP_MQ_RESP_Q. 없으면 1(처음 설계). 1 ~ RESP_Q_MAX 가 아니면 0 */
+static uint32_t env_resp_q(void)
+{
+    const char *s = getenv("OSP_MQ_RESP_Q");
+    if (!s || !*s) return 1;
+    char *end;
+    errno = 0;
+    unsigned long v = strtoul(s, &end, 10);
+    if (errno || *end || v < 1 || v > RESP_Q_MAX) return 0;
+    return (uint32_t)v;
+}
+
+int tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp)
+{
+    if (max_clients < 1 || max_clients > MAX_CLIENTS || max_req < sizeof(msg_hdr_t) || max_resp < sizeof(msg_hdr_t) ||
+        max_req > sizeof(msg_hdr_t) + MAX_PAYLOAD) {
+        errno = EINVAL;
+        return -1;
+    }
+    lim_clients = max_clients;
+    lim_req = max_req;
+    return 0;
+}
 
 /*
  * 잠금 파일을 열고 서버 자리를 잡는다. 다른 서버가 살아 있으면 -1, errno = EADDRINUSE.
@@ -336,7 +427,9 @@ static void server_release(void)
     char lp[PATH_LEN];
     lock_path(lp);
     if (srv_req_q >= 0)  { msgctl(srv_req_q, IPC_RMID, NULL);  srv_req_q = -1; }
-    if (srv_resp_q >= 0) { msgctl(srv_resp_q, IPC_RMID, NULL); srv_resp_q = -1; }
+    for (uint32_t s = 0; s < RESP_Q_MAX; s++)
+        if (srv_resp_q[s] >= 0) { msgctl(srv_resp_q[s], IPC_RMID, NULL); srv_resp_q[s] = -1; }
+    if (srv_admit_sem >= 0) { semctl(srv_admit_sem, 0, IPC_RMID); srv_admit_sem = -1; }
     if (srv_lock_fd >= 0) {
         unlink(lp);                      /* 잠금을 쥔 채로 이름부터 지운다 */
         close(srv_lock_fd);
@@ -366,7 +459,7 @@ static bool srv_watch_tick(void)
         atomic_store(&srv_dead[id], true);
         bool idle = pthread_mutex_trylock(&srv_resp_mtx[id]) == 0;
         if (byte_locked(srv_lock_fd, LOCK_CLIENT(id)) == 0)
-            purge(srv_resp_q, MTYPE_OF(id), (frag_t *)&junk, sizeof junk.data);
+            purge(srv_resp_of(id), MTYPE_OF(id), (frag_t *)&junk, sizeof junk.data);
         if (idle) {
             atomic_store(&srv_sent[id], false);
             pthread_mutex_unlock(&srv_resp_mtx[id]);
@@ -380,19 +473,76 @@ int tp_server_open(void)
     srv_lock_fd = server_lock();         /* 서버가 이미 떠 있으면 EADDRINUSE */
     if (srv_lock_fd < 0) return -1;
 
+    srv_nresp = env_resp_q();
+    if (srv_nresp == 0) { errno = EINVAL; goto fail; }
+
+    /*
+     * 요청 큐가 갖게 될 용량. 새 큐의 msg_qbytes 는 msgmnb 이다. 원인 확인 실험용으로 OSP_MQ_REQ_QBYTES=B 이면 B 로
+     * 줄인다(늘리는 것은 관리자 권한 CAP_SYS_RESOURCE 가 있어야 해서 줄이는 쪽으로만 잰다).
+     */
+    unsigned long qbytes = 0;
+    FILE *mf = fopen("/proc/sys/kernel/msgmnb", "r");
+    if (mf) {
+        if (fscanf(mf, "%lu", &qbytes) != 1) qbytes = 0;
+        fclose(mf);
+    }
+    if (qbytes == 0) qbytes = 16384;
+    const char *qb = getenv("OSP_MQ_REQ_QBYTES");
+    if (qb && *qb) {
+        char *end;
+        unsigned long v = strtoul(qb, &end, 10);
+        if (*end || v < FRAG_MIN || v > qbytes) { errno = EINVAL; goto fail; }
+        qbytes = v;
+    }
+
+    /* 입장 제한 세마포어. 앞 서버가 남긴 것은 지운다. 클라이언트가 설정을 읽기 전에 만들어 둔다 */
+    int stale = semget(KEY_ADMIT, 0, 0);
+    if (stale >= 0) semctl(stale, 0, IPC_RMID);
+    conf_t conf = { srv_nresp, 0 };
+    const char *ad = getenv("OSP_MQ_ADMIT");
+    if (ad && *ad && strcmp(ad, "0") != 0) {
+        conf.admit = (uint32_t)(qbytes / ADMIT_UNIT);
+        srv_admit_sem = semget(KEY_ADMIT, 1, IPC_CREAT | IPC_EXCL | 0600);
+        if (srv_admit_sem < 0) goto fail;
+        union semun arg = { .val = (int)conf.admit };
+        if (semctl(srv_admit_sem, 0, SETVAL, arg) < 0) goto fail;
+    }
+
+    /* 클라이언트가 읽을 설정을 잠금 파일에 적는다. 큐보다 먼저 적으므로 큐를 찾은 클라이언트는 이 값도 본다 */
+    if (pwrite(srv_lock_fd, &conf, sizeof conf, CONF_OFF) != (ssize_t)sizeof conf) goto fail;
+
     srv_req_q = make_queue(KEY_REQ);
     if (srv_req_q < 0) goto fail;
-    srv_resp_q = make_queue(KEY_RESP);
-    if (srv_resp_q < 0) goto fail;
+    struct msqid_ds qds;
+    if (msgctl(srv_req_q, IPC_STAT, &qds) < 0) goto fail;
+    if (qds.msg_qbytes > qbytes) {
+        qds.msg_qbytes = qbytes;
+        if (msgctl(srv_req_q, IPC_SET, &qds) < 0) goto fail;
+    } else if (qds.msg_qbytes < qbytes && srv_admit_sem >= 0) {
+        /* msgmnb 를 못 읽어 짐작한 값보다 작다. 세마포어를 실제 용량에 맞춘다 */
+        union semun arg = { .val = (int)(qds.msg_qbytes / ADMIT_UNIT) };
+        if (semctl(srv_admit_sem, 0, SETVAL, arg) < 0) goto fail;
+    }
+    /* 앞 서버가 Q 를 더 크게 쓰고 비정상 종료했으면 쓰지 않는 key 의 큐가 남아 있다. 모두 지운다 */
+    for (uint32_t s = srv_nresp; s < RESP_Q_MAX; s++) {
+        int q = msgget(KEY_RESP(s), 0);
+        if (q >= 0) msgctl(q, IPC_RMID, NULL);
+    }
+    for (uint32_t s = 0; s < srv_nresp; s++) {
+        srv_resp_q[s] = make_queue(KEY_RESP(s));
+        if (srv_resp_q[s] < 0) goto fail;
+    }
 
     srv_limit = frag_limit();
-    if (send_chunk(srv_resp_q, srv_limit, &srv_chunk) < 0) goto fail;
+    if (send_chunk(srv_resp_q[0], srv_limit, &srv_chunk) < 0) goto fail;
 
     srv_sbuf_stride = (sizeof(long) + srv_chunk + 15) & ~(size_t)15;
     srv_rbuf = frag_alloc(srv_limit);
     srv_sbuf = malloc(srv_sbuf_stride * MAX_CLIENTS);
-    srv_asm_buf = malloc((size_t)MAX_CLIENTS * MAX_PAYLOAD);
-    if (!srv_rbuf || !srv_sbuf || !srv_asm_buf) { errno = ENOMEM; goto fail; }
+    /* 요청이 조각 하나(FRAG_HDR + 머리 + payload <= srv_limit)에 들어가면 붙이는 자리가 필요 없다 */
+    srv_asm_stride = FRAG_HDR + lim_req <= srv_limit ? 0 : lim_req - sizeof(msg_hdr_t);
+    srv_asm_buf = srv_asm_stride ? malloc((size_t)lim_clients * srv_asm_stride) : NULL;
+    if (!srv_rbuf || !srv_sbuf || (srv_asm_stride && !srv_asm_buf)) { errno = ENOMEM; goto fail; }
 
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
         pthread_mutex_init(&srv_resp_mtx[i], NULL);
@@ -434,6 +584,8 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
             return -1;
         }
         if (srv_rbuf->mtype == MTYPE_WAKE) { errno = ECANCELED; return -1; }
+        /* 입장 제한: 클라이언트가 이 조각을 보내기 전에 얻은 몫을 돌려준다 (깨우기 조각은 서버가 얻지 않고 보낸다) */
+        if (srv_admit_sem >= 0) admit_op(srv_admit_sem, admit_units((size_t)n));
         if (srv_rbuf->mtype < 1 || srv_rbuf->mtype > (long)MAX_CLIENTS) continue;
         if ((size_t)n < FRAG_HDR) continue;
 
@@ -452,7 +604,8 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
             dlen -= sizeof h;
             if (dlen > h.payload_len) continue;
 
-            if (h.payload_len > cap || h.payload_len > MAX_PAYLOAD) {
+            if (h.payload_len > cap || h.payload_len > MAX_PAYLOAD ||
+                (dlen < h.payload_len && (id >= lim_clients || h.payload_len > srv_asm_stride))) {
                 /* 이어지는 조각은 붙이는 중이 아니므로 아래에서 버려진다 */
                 *hdr = h;
                 errno = EMSGSIZE;
@@ -466,14 +619,14 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
             srv_asm[id].hdr = h;
             srv_asm[id].got = dlen;
             srv_asm[id].active = true;
-            memcpy(srv_asm_buf + (size_t)id * MAX_PAYLOAD, data, dlen);
+            memcpy(srv_asm_buf + (size_t)id * srv_asm_stride, data, dlen);
         } else if (srv_rbuf->kind == FRAG_CONT) {
             if (!srv_asm[id].active) continue;       /* 첫 조각을 못 받은 조각은 버린다 */
 
             size_t total = srv_asm[id].hdr.payload_len;
             if (dlen > total - srv_asm[id].got) { srv_asm[id].active = false; continue; }
 
-            char *buf = srv_asm_buf + (size_t)id * MAX_PAYLOAD;
+            char *buf = srv_asm_buf + (size_t)id * srv_asm_stride;
             memcpy(buf + srv_asm[id].got, data, dlen);
             srv_asm[id].got += dlen;
             if (srv_asm[id].got < total) continue;
@@ -507,10 +660,10 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
         if (byte_locked(srv_lock_fd, LOCK_CLIENT(id)) == 1) atomic_store(&srv_dead[id], false);
         else { errno = EPIPE; goto out; }
     }
-    rc = send_msg(srv_resp_q, MTYPE_OF(id), f, srv_chunk, hdr, payload, &srv_dead[id]);
+    rc = send_msg(srv_resp_of(id), MTYPE_OF(id), f, srv_chunk, hdr, payload, &srv_dead[id], -1);
     if (rc < 0 && errno == EPIPE && atomic_load(&srv_opened)) {
         /* 보내다 만 조각을 치운다. mutex 를 잡고 있어서 새 클라이언트의 응답은 아직 큐에 없다 */
-        purge(srv_resp_q, MTYPE_OF(id), f, srv_chunk);
+        purge(srv_resp_of(id), MTYPE_OF(id), f, srv_chunk);
         errno = EPIPE;
     }
 out:
@@ -524,17 +677,23 @@ out:
  */
 void tp_server_wake(void)
 {
-    if (!atomic_load(&srv_opened)) return;
-    atomic_store(&srv_stopping, true);
+    pthread_mutex_lock(&srv_wake_mtx);         /* 닫기와 겹치지 않게 (srv_wake_mtx 설명) */
+    if (atomic_load(&srv_opened)) {
+        atomic_store(&srv_stopping, true);
 
-    struct { long mtype; uint32_t kind; uint32_t reserved; } w = { MTYPE_WAKE, FRAG_WAKE, 0 };
-    while (msgsnd(srv_req_q, &w, FRAG_HDR, IPC_NOWAIT) < 0 && errno == EINTR)
-        ;
+        struct { long mtype; uint32_t kind; uint32_t reserved; } w = { MTYPE_WAKE, FRAG_WAKE, 0 };
+        while (msgsnd(srv_req_q, &w, FRAG_HDR, IPC_NOWAIT) < 0 && errno == EINTR)
+            ;
+    }
+    pthread_mutex_unlock(&srv_wake_mtx);
 }
 
 void tp_server_close(void)
 {
-    if (!atomic_exchange(&srv_opened, false)) return;
+    pthread_mutex_lock(&srv_wake_mtx);         /* 진행 중인 깨우기가 끝난 뒤에 닫는다 */
+    bool was_open = atomic_exchange(&srv_opened, false);
+    pthread_mutex_unlock(&srv_wake_mtx);
+    if (!was_open) return;
     watch_stop(&srv_watch);
 
     /*
@@ -542,7 +701,8 @@ void tp_server_close(void)
      * 클라이언트의 tp_recv_resp 는 ECONNRESET, tp_send_req 는 EPIPE 로 끝난다.
      */
     msgctl(srv_req_q, IPC_RMID, NULL);
-    msgctl(srv_resp_q, IPC_RMID, NULL);
+    for (uint32_t s = 0; s < srv_nresp; s++) msgctl(srv_resp_q[s], IPC_RMID, NULL);
+    if (srv_admit_sem >= 0) semctl(srv_admit_sem, 0, IPC_RMID);   /* 입장을 기다리던 클라이언트도 깨어난다(EPIPE) */
 
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
         pthread_mutex_lock(&srv_resp_mtx[i]);        /* 보내던 워커가 빠져나오기를 기다린다 */
@@ -550,8 +710,23 @@ void tp_server_close(void)
         pthread_mutex_destroy(&srv_resp_mtx[i]);
     }
     srv_req_q = -1;
-    srv_resp_q = -1;
+    for (uint32_t s = 0; s < RESP_Q_MAX; s++) srv_resp_q[s] = -1;
     server_release();
+}
+
+/* 요청·응답 큐의 용량(msg_qbytes). 응답 채널은 큐 Q개(기본 1개)를 클라이언트가 나눠 쓴다 */
+void tp_server_info(tp_info_t *out)
+{
+    memset(out, 0, sizeof *out);
+    if (!atomic_load(&srv_opened)) return;
+    struct msqid_ds ds;
+    if (msgctl(srv_req_q, IPC_STAT, &ds) == 0) out->cap_bytes += ds.msg_qbytes;
+    for (uint32_t s = 0; s < srv_nresp; s++) {
+        if (msgctl(srv_resp_q[s], IPC_STAT, &ds) != 0) continue;
+        out->cap_bytes += ds.msg_qbytes;
+        if (out->nchan == 0 || ds.msg_qbytes < out->min_chan) out->min_chan = (uint32_t)ds.msg_qbytes;
+        out->nchan++;
+    }
 }
 
 /* ================================================================
@@ -559,7 +734,10 @@ void tp_server_close(void)
  * ================================================================ */
 
 static int cli_req_q = -1;
-static int cli_resp_q = -1;
+static int cli_resp_q = -1;                      /* 내가 받는 응답 큐 = 응답 큐 (id % Q) */
+static int cli_resp_all[RESP_Q_MAX];             /* 열 때 본 응답 큐 Q개. 서버가 죽었을 때 감시 스레드가 지운다 */
+static uint32_t cli_nresp;
+static int cli_admit_sem = -1;                   /* 요청 큐 입장 제한 세마포어. 서버가 쓰지 않으면 -1 */
 static int cli_lock_fd = -1;
 static uint32_t cli_id;
 static size_t cli_limit;
@@ -579,7 +757,8 @@ static bool cli_watch_tick(void)
 {
     if (byte_locked(cli_lock_fd, LOCK_SERVER) != 0) return true;
     msgctl(cli_req_q, IPC_RMID, NULL);
-    msgctl(cli_resp_q, IPC_RMID, NULL);
+    for (uint32_t s = 0; s < cli_nresp; s++) msgctl(cli_resp_all[s], IPC_RMID, NULL);
+    if (cli_admit_sem >= 0) semctl(cli_admit_sem, 0, IPC_RMID);
     return false;
 }
 
@@ -607,11 +786,30 @@ int tp_client_open(uint32_t client_id)
     }
 
     cli_req_q = msgget(KEY_REQ, 0);
-    cli_resp_q = msgget(KEY_RESP, 0);
-    if (cli_req_q < 0 || cli_resp_q < 0) {
+    if (cli_req_q < 0) {
         if (errno == ENOENT) errno = ECONNREFUSED;
         goto fail;
     }
+    /* 서버가 요청 큐보다 먼저 적어 둔 설정(응답 큐 수, 입장 제한)을 읽고, 응답 큐 Q개를 모두 찾아 둔다 */
+    conf_t conf;
+    if (pread(cli_lock_fd, &conf, sizeof conf, CONF_OFF) != (ssize_t)sizeof conf ||
+        conf.nresp < 1 || conf.nresp > RESP_Q_MAX) {
+        errno = ECONNREFUSED;
+        goto fail;
+    }
+    cli_nresp = conf.nresp;
+    if (conf.admit) {
+        cli_admit_sem = semget(KEY_ADMIT, 0, 0);
+        if (cli_admit_sem < 0) { errno = ECONNREFUSED; goto fail; }
+    }
+    for (uint32_t s = 0; s < cli_nresp; s++) {
+        cli_resp_all[s] = msgget(KEY_RESP(s), 0);
+        if (cli_resp_all[s] < 0) {
+            if (errno == ENOENT) errno = ECONNREFUSED;
+            goto fail;
+        }
+    }
+    cli_resp_q = cli_resp_all[client_id % cli_nresp];
 
     cli_limit = frag_limit();
     if (send_chunk(cli_req_q, cli_limit, &cli_chunk) < 0) {
@@ -636,6 +834,8 @@ fail:;
     free(cli_rbuf); cli_rbuf = NULL;
     close(cli_lock_fd); cli_lock_fd = -1;
     cli_req_q = cli_resp_q = -1;
+    cli_nresp = 0;
+    cli_admit_sem = -1;
     errno = e;
     return -1;
 }
@@ -644,7 +844,7 @@ fail:;
 int tp_send_req(const msg_hdr_t *hdr, const void *payload)
 {
     pthread_mutex_lock(&cli_send_mtx);
-    int rc = send_msg(cli_req_q, MTYPE_OF(cli_id), cli_sbuf, cli_chunk, hdr, payload, NULL);
+    int rc = send_msg(cli_req_q, MTYPE_OF(cli_id), cli_sbuf, cli_chunk, hdr, payload, NULL, cli_admit_sem);
     pthread_mutex_unlock(&cli_send_mtx);
     return rc;
 }
@@ -706,5 +906,7 @@ void tp_client_close(void)
     free(cli_sbuf); cli_sbuf = NULL;
     free(cli_rbuf); cli_rbuf = NULL;
     cli_req_q = cli_resp_q = -1;
+    cli_nresp = 0;
+    cli_admit_sem = -1;
     cli_opened = 0;
 }

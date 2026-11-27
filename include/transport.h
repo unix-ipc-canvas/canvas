@@ -1,7 +1,8 @@
 /*
  * transport.h - 전송 계층 인터페이스 (IPC 버전마다 하나씩 구현)
  *
- * 11/18 확정 (#4). 바꿀 때는 owner 가 승인한 PR 로만 바꾼다 (docs/CONTRIBUTING.md 의 PR 절).
+ * 11/18 확정 (#4). 11/27 2단계 재수행에서 tp_set_limits, tp_server_info 를 더했다.
+ * 바꿀 때는 owner 가 승인한 PR 로만 바꾼다 (docs/CONTRIBUTING.md 의 PR 절).
  *
  * 서버, 클라이언트, 1단계 벤치마크는 이 함수들만 부른다. 어떤 IPC 인지는 링크할 때 정해진다.
  *   src/transport/transport_pipe.c   FIFO (이름 있는 pipe)
@@ -44,7 +45,8 @@
  *   tp_send_req      EPIPE         서버가 끝났다
  *   tp_recv_resp     ECONNRESET    서버가 끝났다
  *                    EMSGSIZE      cap 보다 큰 응답을 버렸다
- *   번호가 MAX_CLIENTS 이상이면 EINVAL. 그 밖의 errno 는 시스템 콜이 낸 값 그대로다.
+ *   번호가 MAX_CLIENTS 이상이면 EINVAL (shm 은 서버가 tp_set_limits 로 정한 클라이언트 수 이상이면 EINVAL).
+ *   그 밖의 errno 는 시스템 콜이 낸 값 그대로다.
  *   성공하면 0, tp_recv_* 는 받은 payload 길이를 돌려준다.
  *
  * 자원
@@ -68,6 +70,23 @@
 const char *tp_name(void);              /* "pipe", "mq", "shm", "upipe" */
 
 /* ---- 서버 쪽 ---- */
+
+/*
+ * 서버가 tp_server_open 전에 부른다. 받을 클라이언트 수와 요청·응답 하나의 최대 크기(머리 포함)를 알려 준다.
+ * 전송 계층은 클라이언트 수에 비례하는 버퍼를 이 크기에 맞춰 잡는다 (shm 응답 링, mq 조각 버퍼, pipe 열린 파일 한도).
+ * 부르지 않으면 1단계 값(클라이언트 16개, 머리 + MAX_PAYLOAD)이다. 성공 0, 범위 밖이면 -1/EINVAL.
+ */
+int     tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp);
+
+/* 서버가 잡고 있는 IPC 버퍼. 측정 기록용 (요구사항 N-5) */
+typedef struct {
+    uint64_t cap_bytes;     /* 버퍼 용량 합. pipe: 연 FIFO 의 F_GETPIPE_SZ 합, mq: 큐의 msg_qbytes 합, shm: 세그먼트 크기 합 */
+    uint64_t rss_bytes;     /* 실제로 잡힌 메모리. shm 만 안다(/proc/sysvipc/shm 의 rss). 모르면 0 */
+    uint32_t nchan;         /* 응답 채널 수 (pipe: 연 응답 FIFO 수, mq: 응답 큐 수, shm: 응답 링 수) */
+    uint32_t min_chan;      /* 응답 채널 하나의 가장 작은 용량(바이트). 모르면 0 */
+} tp_info_t;
+void    tp_server_info(tp_info_t *out);
+
 int     tp_server_open(void);                                   /* 요청 채널 만들기 */
 ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap); /* 요청 1개 받기 (막힘) */
 int     tp_send_resp(const msg_hdr_t *hdr, const void *payload);/* hdr->client_id 에게 응답 */
