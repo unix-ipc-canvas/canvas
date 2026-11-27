@@ -12,18 +12,7 @@
  *   - 요청이 PIPE_BUF(4096B) 이하이면 write 한 번으로 보낸다. 커널이 원자성을 보장하므로 잠금이 없다.
  *   - 요청이 PIPE_BUF 를 넘으면(1단계 벤치마크의 큰 메시지) 잠금 파일에 fcntl 쓰기 잠금을 걸고 보낸다.
  *   - 응답은 클라이언트별 mutex 를 잡고 보낸다. 큰 응답이 여러 번의 write 로 나뉘어도 섞이지 않는다.
- *
- * 버퍼 크기 (설계 개선 실험, docs/design/README.md#실행-옵션)
- *   환경 변수 OSP_PIPE_SZ(바이트)를 주면 서버가 요청 FIFO 와 응답 FIFO 의 버퍼를 그 크기로 바꾼다(F_SETPIPE_SZ).
- *   주지 않으면 커널 기본값(64KB)이다. 버퍼가 차면 쓰는 쪽이 잠들고 읽는 쪽이 비우면 깨어나므로,
- *   버퍼보다 큰 응답은 버퍼 하나를 넘길 때마다 양쪽이 한 번씩 잠든다(1단계 측정).
- *
- * 송신 잠금 기록 (원인 확인 실험, docs/measurement/stage1.md 의 pipe 의 긴 꼬리)
- *   클라이언트 환경 변수 OSP_PIPE_LOCKLOG=<접두어> 를 주면 PIPE_BUF 를 넘는 요청마다 잠금을 기다리기 시작한 시각,
- *   같은 프로세스의 mutex 를 얻은 시각, fcntl 잠금을 얻은 시각(CLOCK_MONOTONIC ns)을 메모리에 모아 두었다가
- *   tp_client_close 에서 <접두어>.<id>.<pid> 파일에 한 줄씩 쓴다. 주지 않으면 시각을 재지 않는다.
  */
-#define _GNU_SOURCE             /* F_SETPIPE_SZ */
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -33,9 +22,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -164,52 +151,9 @@ static void ignore_sigpipe(void)
 /* PIPE_BUF 를 넘는 요청에 거는 송신 잠금. 프로세스 사이는 fcntl, 같은 프로세스의 스레드 사이는 mutex */
 static pthread_mutex_t big_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-/* 송신 잠금 기록. lw_rec 은 big_mtx 를 쥐고 쓴다 */
-typedef struct { uint64_t start, mtx, got; } lockwait_t;
-static lockwait_t *lw_rec;
-static size_t lw_n, lw_cap;
-static const char *lw_prefix;
-
-static uint64_t mono_ns(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-}
-
-static void lockwait_open(void)
-{
-    const char *p = getenv("OSP_PIPE_LOCKLOG");
-    if (!p || !*p) return;
-    lw_cap = 1u << 20;
-    lw_rec = malloc(sizeof *lw_rec * lw_cap);
-    lw_n = 0;
-    lw_prefix = lw_rec ? p : NULL;
-}
-
-static void lockwait_close(uint32_t id)
-{
-    if (!lw_rec) return;
-    char path[512];
-    snprintf(path, sizeof path, "%s.%u.%ld", lw_prefix, id, (long)getpid());
-    FILE *f = fopen(path, "w");
-    if (f) {
-        fprintf(f, "# id %u pid %ld: start_ns mtx_ns got_ns (CLOCK_MONOTONIC)\n", id, (long)getpid());
-        for (size_t i = 0; i < lw_n; i++)
-            fprintf(f, "%llu %llu %llu\n", (unsigned long long)lw_rec[i].start,
-                    (unsigned long long)lw_rec[i].mtx, (unsigned long long)lw_rec[i].got);
-        fclose(f);
-    }
-    free(lw_rec);
-    lw_rec = NULL;
-    lw_n = lw_cap = 0;
-}
-
 static int big_lock(int lock_fd)
 {
-    uint64_t t0 = lw_rec ? mono_ns() : 0;
     pthread_mutex_lock(&big_mtx);
-    uint64_t t1 = lw_rec ? mono_ns() : 0;
     struct flock fl = { .l_type = F_WRLCK, .l_whence = SEEK_SET, .l_start = 0, .l_len = 0 };
     while (fcntl(lock_fd, F_SETLKW, &fl) < 0) {
         if (errno == EINTR) continue;
@@ -218,7 +162,6 @@ static int big_lock(int lock_fd)
         errno = e;
         return -1;
     }
-    if (lw_rec && lw_n < lw_cap) lw_rec[lw_n++] = (lockwait_t){ t0, t1, mono_ns() };
     return 0;
 }
 
@@ -290,34 +233,6 @@ static int srv_resp_fd[MAX_CLIENTS];             /* 응답 FIFO 쓰기 끝. 처�
 static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static int srv_opened;
-static int srv_pipe_sz;                          /* OSP_PIPE_SZ. 0 이면 커널 기본값 그대로 */
-
-/*
- * OSP_PIPE_SZ 를 읽는다. 없거나 비어 있으면 0. 숫자가 아니거나 4096 ~ 1GB 밖이면 -1, errno = EINVAL.
- * DECISION: 서버만 읽는다. FIFO 버퍼는 FIFO 하나에 하나라 어느 쪽에서 바꿔도 같고,
- *   서버가 정하면 실험마다 서버 한 곳의 환경만 바꾸면 된다(shm 의 OSP_SHM_* 와 같은 방식).
- */
-static int pipe_sz_from_env(void)
-{
-    const char *s = getenv("OSP_PIPE_SZ");
-    if (!s || !*s) return 0;
-    char *end;
-    errno = 0;
-    unsigned long v = strtoul(s, &end, 10);
-    if (errno || *end || v < 4096 || v > (1ul << 30)) { errno = EINVAL; return -1; }
-    return (int)v;
-}
-
-/*
- * fd 가 가리키는 FIFO 의 버퍼를 srv_pipe_sz 로 바꾼다. 0 이면 아무것도 하지 않는다.
- * 커널이 쪽 수를 2의 거듭제곱으로 올려 잡는다. 관리자가 아니면 /proc/sys/fs/pipe-max-size(기본 1MB)가 한도이고,
- * 넘거나 사용자별 한도(pipe-user-pages-soft)에 걸리면 EPERM 이다.
- */
-static int apply_pipe_sz(int fd)
-{
-    if (srv_pipe_sz == 0) return 0;
-    return fcntl(fd, F_SETPIPE_SZ, srv_pipe_sz) < 0 ? -1 : 0;
-}
 
 int tp_server_open(void)
 {
@@ -326,8 +241,6 @@ int tp_server_open(void)
     lock_path(lp);
 
     ignore_sigpipe();
-    srv_pipe_sz = pipe_sz_from_env();
-    if (srv_pipe_sz < 0) { srv_pipe_sz = 0; return -1; }
     if (make_fifo(rp) < 0) return -1;           /* 서버가 이미 떠 있으면 EADDRINUSE */
 
     /*
@@ -339,7 +252,6 @@ int tp_server_open(void)
      */
     srv_req_fd = open(rp, O_RDWR);
     if (srv_req_fd < 0) goto fail;
-    if (apply_pipe_sz(srv_req_fd) < 0) goto fail;
 
     /* 깨우기 전용 쓰기 끝. 막히지 않게 따로 연다 (O_NONBLOCK 은 열린 파일마다라 srv_req_fd 의 읽기에는 영향이 없다) */
     srv_wake_fd = open(rp, O_WRONLY | O_NONBLOCK);
@@ -367,23 +279,6 @@ fail:;
 }
 
 static int open_resp(uint32_t id);
-
-/*
- * 서버를 닫을 때: kill -9 로 죽은 클라이언트는 자기 응답 FIFO 를 지우지 못한다. 그 이름을 쓰기로 막히지 않게 열어 보아
- * 읽는 쪽이 없으면(ENXIO) 지운다. 살아 있는 클라이언트는 FIFO 를 만들자마자 읽기 끝을 열어 두므로 지우지 않는다
- * (만들고 열기 사이의 아주 짧은 틈에 걸리면 지워지지만, 서버가 끝나는 중이라 그 클라이언트도 곧 끝난다).
- * 호출하는 쪽이 srv_resp_mtx[id] 를 잡고 있어야 한다
- */
-static void unlink_dead_fifo_locked(uint32_t id)
-{
-    char path[PATH_LEN];
-    resp_path(path, id);
-    struct stat st;
-    if (stat(path, &st) < 0 || !S_ISFIFO(st.st_mode)) return;
-    int fd = open(path, O_WRONLY | O_NONBLOCK);
-    if (fd >= 0) { close(fd); return; }
-    if (errno == ENXIO) unlink(path);
-}
 
 /* 클라이언트 id 의 응답 FIFO 쓰기 끝을 닫는다. 호출하는 쪽이 srv_resp_mtx[id] 를 잡고 있어야 한다 */
 static void drop_resp_locked(uint32_t id)
@@ -435,7 +330,7 @@ static int open_resp(uint32_t id)
         if (errno == ENXIO || errno == ENOENT) errno = EPIPE;
         return -1;
     }
-    if (clear_nonblock(fd) < 0 || apply_pipe_sz(fd) < 0) {
+    if (clear_nonblock(fd) < 0) {
         int e = errno;
         close(fd);
         errno = e;
@@ -450,9 +345,7 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
     if (id >= MAX_CLIENTS) { errno = EINVAL; return -1; }
 
     int rc = -1;
-#ifndef DEMO_NO_RESP_MUTEX              /* 동기화 시연용 빌드(scripts/race-demo.sh)에서만 뺀다 */
     pthread_mutex_lock(&srv_resp_mtx[id]);
-#endif
 
     /*
      * 예전 클라이언트가 나간 뒤 같은 번호의 새 클라이언트가 FIFO 를 다시 만든 경우,
@@ -478,9 +371,7 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
         if (!(e == EPIPE && done == 0)) break;
     }
 
-#ifndef DEMO_NO_RESP_MUTEX
     pthread_mutex_unlock(&srv_resp_mtx[id]);
-#endif
     return rc;
 }
 
@@ -515,14 +406,8 @@ void tp_server_close(void)
     unlink(rp);
     unlink(lp);
 
-    /*
-     * 정상 종료에서는 송신하던 워커가 모두 빠져나온 뒤라 락이 늘 비어 있다(transport.h 의 약속).
-     * 서버가 두 번째 신호로 바로 끝날 때는 멈춘 클라이언트에게 write 하며 락을 쥔 워커가 남아 있을 수 있다.
-     * 그 락을 기다리면 닫기도 함께 멈추므로, 잡히지 않는 번호는 건너뛴다. 곧 _exit 하므로 그 fd 는 커널이 닫는다.
-     */
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
-        if (pthread_mutex_trylock(&srv_resp_mtx[i]) != 0) continue;
-        unlink_dead_fifo_locked(i);
+        pthread_mutex_lock(&srv_resp_mtx[i]);
         drop_resp_locked(i);             /* 클라이언트의 수신은 EOF 를 받고 끝난다 */
         pthread_mutex_unlock(&srv_resp_mtx[i]);
         pthread_mutex_destroy(&srv_resp_mtx[i]);
@@ -531,30 +416,6 @@ void tp_server_close(void)
     close(srv_wake_fd); srv_wake_fd = -1;
     close(srv_lock_fd); srv_lock_fd = -1;
     srv_opened = 0;
-}
-
-/*
- * 응답 FIFO 의 읽는 쪽(클라이언트)이 모두 닫히면 쓰기 끝의 poll 이 POLLERR 를 돌려준다. 쓰기 끝이 없으면 이름을
- * 막히지 않게 열어 본다(읽는 쪽이 없으면 ENXIO). 워커가 그 FIFO 에 쓰는 중(잠금이 잡혀 있음)이면 알 수 없다(-1). 막히지 않는다.
- */
-int tp_client_alive(uint32_t id)
-{
-    if (id >= MAX_CLIENTS || !srv_opened) return -1;
-    if (pthread_mutex_trylock(&srv_resp_mtx[id]) != 0) return -1;
-    int rc = -1;
-    if (srv_resp_fd[id] >= 0) {
-        struct pollfd p = { .fd = srv_resp_fd[id], .events = POLLOUT };
-        if (poll(&p, 1, 0) >= 0) rc = (p.revents & (POLLERR | POLLHUP | POLLNVAL)) ? 0 : 1;
-    } else {
-        /* 쓰기 끝이 없다(아직 안 열었거나, 받는 쪽이 끝나 EPIPE 로 닫았다): 이름을 막히지 않게 열어 본다 */
-        char path[PATH_LEN];
-        resp_path(path, id);
-        int fd = open(path, O_WRONLY | O_NONBLOCK);
-        if (fd >= 0) { close(fd); rc = 1; }
-        else if (errno == ENXIO || errno == ENOENT) rc = 0;   /* 읽는 쪽이 없다 / FIFO 가 없다 */
-    }
-    pthread_mutex_unlock(&srv_resp_mtx[id]);
-    return rc;
 }
 
 /* ================================================================
@@ -624,7 +485,6 @@ int tp_client_open(uint32_t client_id)
     atomic_store(&cli_keeper_fd, keeper);
     cli_id = client_id;
     cli_opened = 1;
-    lockwait_open();
     return 0;
 
 fail:;
@@ -698,5 +558,4 @@ void tp_client_close(void)
     close(cli_req_fd);  cli_req_fd = -1;
     close(cli_lock_fd); cli_lock_fd = -1;
     cli_opened = 0;
-    lockwait_close(cli_id);
 }

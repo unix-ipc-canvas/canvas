@@ -14,8 +14,9 @@
 | `docs/design/README.md` | 채널, 스레드, 동기화, 실행 옵션, 종료 |
 | `docs/measurement/README.md` | 타임스탬프 위치, 통계, 원자료 형식 |
 | `docs/measurement/stage1.md` | 1단계 측정 기록과 결과 해석 |
+| `docs/measurement/stage2.md` | 2단계 측정 결과, 예측 대비 비교, 원인 확인 실험, 설계 개선, IPC 선택 가이드라인 |
 | `docs/verification/README.md` | 검증 범위·방법·판정 기준 |
-| `docs/submission/` | 보고서 절별 출처와 제출 점검, 발표자료 구성과 데모 시나리오 |
+| `docs/submission/` | 제출물 점검, 보고서 절별 출처, 캡처 목록, 최종보고서·발표자료·발표 대본 |
 | `docs/records/` | 성능 예측, AI 활용 기록, 작업 시간. 덧붙이기만 한다 |
 | `docs/CONTRIBUTING.md` | 커밋·브랜치·이슈·PR 형식 |
 | `README.md` | 역할 분담, 빌드·실행·테스트 명령, 문서 목록 |
@@ -43,7 +44,7 @@
 - `results/`에는 측정용 컴퓨터에서 스크립트가 만든 원자료만 둔다. 수치를 지어내거나 손으로 고치지 않는다. AI가 제시한 수치를 측정값으로 쓰지 않는다.
 - `docs/records/prediction.md`는 커밋한 뒤 위쪽을 고치지 않는다. 바뀐 생각은 맨 아래 수정 기록에 덧붙인다. 예측을 커밋하기 전에는 `server.c`, `client.c`를 만들지 않는다.
 - AI 도구를 쓰면 `docs/records/ai-log.md`에 단계, 프롬프트 요약, 결과를 적는다. AI의 설명이나 코드가 틀린 것을 발견하면 같은 날 적는다. 과제의 필수 기록이다.
-- `docs/records/worklog.csv`의 시간은 작업한 사람이 직접 적는다. 추정해서 채우지 않는다.
+- `docs/records/worklog.csv`에는 날짜, 이름, 한 일, 시간을 적는다. 보고서 결론의 총 투입 시간은 이 파일의 합계다.
 
 ## 커밋·이슈·PR
 

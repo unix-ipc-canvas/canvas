@@ -73,11 +73,6 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap); /* 요청 1개 �
 int     tp_send_resp(const msg_hdr_t *hdr, const void *payload);/* hdr->client_id 에게 응답 */
 void    tp_server_wake(void);                                   /* 막혀 있는 tp_recv_req 깨우기 (종료용). 그 뒤의 tp_recv_req 는 모두 ECANCELED */
 void    tp_server_close(void);                                  /* 자원 모두 삭제 */
-/*
- * 클라이언트 id 가 지금 살아 있는지. 1 살아 있음, 0 끝났음(kill -9 로 죽은 것 포함), -1 알 수 없음.
- * 막히지 않는다. 서버가 STATS 의 접속 수를 셀 때 쓴다 (BYE 없이 죽은 클라이언트를 빼려고)
- */
-int     tp_client_alive(uint32_t id);
 
 /* ---- 클라이언트 쪽 ---- */
 int     tp_client_open(uint32_t client_id);                     /* 요청 채널 연결 + 내 응답 채널 만들기 */

@@ -1,109 +1,67 @@
-# 구현 계획 — 공유 캔버스 서버
+# 구현 계획 — 다중 그림판 공유 캔버스 서버
 
 [문서 안내](../../README.md#관련-문서)
 
-[요구사항](../requirements/README.md)을 구현하는 구조와 순서를 정한다. 세부 설계는 [설계 명세](README.md), 측정은 [측정 방법](../measurement/README.md)에 둔다. 완료 여부를 기록하는 별도 현황 문서는 쓰지 않는다. 진행 상황은 GitHub의 [이슈](https://github.com/unix-ipc-canvas/canvas/issues)와 [마일스톤](https://github.com/unix-ipc-canvas/canvas/milestones)으로 본다.
+무엇을 어느 파일에, 어떤 순서로 만드는지 정한다. 설계의 내용은 [설계 명세](README.md)에 있다.
 
 ## 구현 방향
 
-서버·클라이언트·벤치마크는 `transport.h`의 함수만 부르고, 어떤 IPC인지는 링크할 때 정해진다. 그래서 세 버전의 차이는 전송 계층 파일 하나뿐이고, 1단계 벤치마크와 2단계 응용이 같은 전송 코드를 쓴다.
+- 1단계에서 만든 전송 계층(`transport_<ipc>.c`)과 두 헤더를 2단계 응용에도 그대로 쓴다. 1단계가 잰 바로 그 코드라 1단계 결과로 예측할 수 있다. 응용에 필요한 것만 넓힌다: 클라이언트 번호 1024개, 그림판 번호, 응답 크기 상한에 맞춘 shm 링 크기(`tp_set_limits`).
+- 응용 로직은 공통 모듈이고 IPC 고유 호출(`msgsnd`, `shmat`, `mkfifo` 등)은 전송 계층에만 둔다(요구사항 C-7).
+- 설계 선택(락 방식, 워커 수, 그림판 수)과 개선 전후는 실행 옵션이나 환경 변수로 바꾼다(C-9).
 
-```text
-canvas/
-├── include/          proto.h, transport.h          (바꿀 때 owner 승인)
-├── src/transport/    transport_{pipe,mq,shm}.c     (IPC 담당이 1개씩)
-├── src/common/       canvas, server, client, verify, workload, util
-├── src/bench/        bench.c                       (1단계 echo 벤치마크)
-├── src/test/         tptest.c, apptest.c           (전송 계층·서버 시험 도구)
-├── scripts/          측정 자동화, 그래프, verify.sh
-└── results/          측정 원자료 CSV
-```
+## 파일 책임
 
-| 파일 | 책임·계약 | 담당 |
+| 파일 | 내용 | 담당 |
 | --- | --- | --- |
-| `include/proto.h` | 메시지 형식, 캔버스 크기, `MAX_PAYLOAD` | 공통 |
-| `include/transport.h` | 전송 계층 인터페이스와 약속(첫 요청 HELLO, 실패할 때의 errno, 닫는 순서). 메시지 하나를 통째로 주고받는다 | 공통 |
-| `include/canvas.h` | 타일 크기 기본값·범위와 타일 번호 계산. 캔버스 함수 선언은 구현하면서 더한다 | 서버 담당 |
-| `src/transport/transport_pipe.c` | FIFO 구현 | pipe 담당 |
-| `src/transport/transport_mq.c` | System V message queue 구현. 큰 메시지 분할·재조립 | mq 담당 |
-| `src/transport/transport_shm.c` | System V shared memory + semaphore 구현 | shm 담당 |
-| `src/transport/transport_upipe.c` | 익명 pipe 구현. 1단계 벤치마크 전용 | 측정 담당 |
-| `src/common/canvas.c` | 캔버스, 타일 락, PGM 저장, 체크섬 | 서버 담당 |
-| `src/common/server.c` | 수신·워커·관리 스레드, 작업 큐, 종료 처리 | 서버 담당 |
-| `src/common/client.c` | 송신·수신·통계 스레드, CSV 출력 | 클라이언트 담당 |
-| `src/common/workload.c`, `include/workload.h` | 시드와 옵션(`-m`, `-r`, `-S`)으로 요청열을 만든다. `client.c`와 `verify.c`가 같은 요청열을 만들도록 한 곳에 둔다 | 클라이언트 담당 |
-| `src/common/verify.c` | 정답 체크섬 계산 | 클라이언트 담당 |
-| `src/common/util.c` | 시각, 통계, `getrusage`, VmRSS | 측정 담당 |
-| `src/bench/bench.c` | 1단계 echo 벤치마크 | 측정 담당 |
-| `src/test/tptest.c` | 전송 계층 시험 도구. `scripts/test-transport.sh`가 세 버전에 같은 시나리오를 돌린다 | 측정 담당 |
-| `src/test/apptest.c` | 서버 시험 도구. 클라이언트가 만들지 않는 요청(잘못된 요청, 큰 SNAPSHOT의 내용 비교)을 보낸다. `verify.sh`의 T-11, T-15가 쓴다 | 서버 담당 |
-| `scripts/` | 실험 실행, 그래프, `verify.sh` | 측정 담당 |
+| `include/proto.h` | 메시지 형식, 상수(그림판 크기, 클라이언트·그림판 수 상한, SNAPSHOT 상한) | 공통(owner 승인) |
+| `include/transport.h` | 전송 계층 함수와 약속 | 공통(owner 승인) |
+| `src/transport/transport_pipe.c` | FIFO 전송 계층 | A |
+| `src/transport/transport_mq.c` | System V message queue 전송 계층 | B |
+| `src/transport/transport_shm.c` | System V shared memory + semaphore 전송 계층 | C |
+| `src/transport/transport_upipe.c` | 익명 pipe(1단계 벤치마크 전용) | C |
+| `src/common/util.c`, `include/util.h` | 시각, 통계, CSV, 자원 사용량 | C |
+| `src/common/canvas.c`, `include/canvas.h` | 그림판, 타일 락, 그리기·복사, 체크섬, PGM | A |
+| `src/common/workload.c`, `include/workload.h` | 시드로 요청열을 만드는 생성기(클라이언트와 검증기가 함께 쓴다) | B |
+| `src/common/server.c` | 서버(수신·워커·관리 스레드, 작업 큐) | A |
+| `src/common/client.c` | 부하 클라이언트(송신·수신·신호 스레드) | B |
+| `src/common/draw.c` | 그리기 클라이언트(입력·수신·갱신 스레드) | B |
+| `src/common/verify.c` | 검증기 | B |
+| `src/common/loadgen.c` | 실행기(클라이언트 N개를 띄우고 결과를 합친다) | C |
+| `src/bench/bench.c` | 1단계 echo 벤치마크 | C |
+| `src/test/tptest.c` | 전송 계층 시험 도구 | C |
+| `scripts/verify.sh` 외 검사 스크립트 | `make test` | 공통 |
+| `scripts/app-bench.sh`, `scripts/plot-app.py` | 2단계 측정과 그래프·요약표 | C |
 
-- `server.c`, `client.c`, `bench.c`에는 IPC 고유 코드(`msgsnd`, `shmat`, `mkfifo` 등)를 넣지 않는다.
-- `include/`의 두 헤더는 owner가 승인한 PR로만 바꾼다([PR 규칙](../CONTRIBUTING.md#pr)).
-- 설계 선택은 모두 실행 옵션으로 만든다([실행 옵션](README.md#실행-옵션)).
-- 처음 구현은 전역 락 1개다. 타일별 락과 그 밖의 개선은 원인 분석 뒤 [설계 개선](#단계별-계획) 단계에서 넣어 전후를 잰다.
-- 명세에 없는 결정은 가장 단순한 쪽으로 하고 코드에 `/* DECISION: ... */`로 남긴 뒤 PR에서 알린다.
+## 역할 분담
 
-## 담당
+IPC는 한 사람이 하나씩 맡는다(과제 조건). 공통 코드는 IPC의 무게에 맞춰 나눴다. 1단계 측정, 2단계 분석, IPC 선택 가이드라인, 결론은 셋이 함께 한다.
 
-팀원별 IPC, 공통 코드, 보고서·발표 담당은 [README의 역할 분담](../../README.md#역할-분담)에서 관리한다. 위 표의 서버 담당은 A, 클라이언트 담당은 B, 측정 담당은 C다.
+| | A: 김병수 | B: 오현근 | C: 이동건 |
+| --- | --- | --- | --- |
+| IPC | pipe(FIFO) | message queue | shared memory |
+| 공통 코드 | 그림판, 서버 | 클라이언트, 그리기 클라이언트, 검증기, 요청 생성기 | 실행기, 측정 도구, 1단계 벤치마크 |
+| 문서 | 설계(4장), 구현(5장) | 요구사항(1장), 워크로드와 예측(3장), 팀워크(7장) | 1단계(2장), 측정과 분석(6장), AI 활용(8.2절) |
+| 발표 | 데모 | 발표자료 취합 | 측정 결과 슬라이드 |
 
 ## 단계별 계획
 
-> [!IMPORTANT]
-> 예측(T3)을 커밋하기 전에는 T4의 `server.c`, `client.c`를 시작하지 않는다. `make test`의 T-00이 이를 검사한다.
+2단계 재수행(11/27~11/30)의 순서다. 안내문의 권장 순서(예측 → 구현 → 검증 → 개선)를 지킨다.
 
-```mermaid
-gantt
-    dateFormat YYYY-MM-DD
-    axisFormat %m/%d
-    tickInterval 1day
-    section 측정 준비
-    T1 헤더 확정·전송 계층 기본   :t1, 2026-11-12, 2026-11-16
-    T2 1단계 벤치마크와 측정      :t2, 2026-11-13, 2026-11-18
-    section 예측
-    T3 워크로드 명세와 예측 커밋  :crit, t3, 2026-11-17, 2026-11-19
-    section 구현
-    공통 모듈 미리 만들기         :t4a, 2026-11-14, 2026-11-19
-    T4 3버전 구현과 체크섬 검증   :t4, 2026-11-19, 2026-11-24
-    section 분석
-    T5 응용 측정과 원인 확인      :t5, 2026-11-24, 2026-11-26
-    T6 설계 개선과 전후 측정      :t6, 2026-11-26, 2026-11-28
-    section 제출
-    T7 보고서·발표자료·동영상     :t7, 2026-11-28, 2026-12-01
-    최종 제출                     :milestone, 2026-11-30, 0d
-```
-
-| 단계 | 산출물 | 기한 |
+| 날짜 | 할 일 | 끝났다고 보는 기준 |
 | --- | --- | --- |
-| T1 | 측정용 컴퓨터 확정, 두 헤더 확정, `transport_*.c`의 기본 송수신 | 11/15 |
-| T2 | `bench.c`, 1단계 측정 스크립트, 크기별·클라이언트 수별 원자료와 그래프 | 11/17 |
-| T3 | [성능 예측](../records/prediction.md)의 워크로드 명세와 예측 커밋 | 11/18 |
-| T4 | `canvas.c`, `server.c`, `client.c`, `verify.c`, `scripts/verify.sh`. 세 버전 체크섬 일치 | 11/23 |
-| T5 | 응용 측정(워커 수 1·2·4·8 포함, [2단계 실험](../measurement/README.md#2단계-실험)), 예측 대비 비교, 원인 확인 실험 | 11/25 |
-| T6 | 설계 개선 1회 이상과 전후 측정, IPC 선택 가이드라인. 후보: 락 방식·타일 크기, 거짓 공유 줄이기(타일 락 배열, shm 링의 head·tail), 받는 쪽 복사 줄이기, pipe 버퍼 크기(`OSP_PIPE_SZ`, 큰 응답의 잠들고 깨기 줄이기), shm 링 크기 줄이기(`OSP_SHM_*`, 메모리 절감 N-5) | 11/27 |
-| T7 | 최종보고서, 발표자료, 동영상, `make dist` | 11/30 |
+| 11/27 | 1단계 밖의 코드·문서 초기화, 요구사항·설계·테스트 명세, **워크로드 명세와 예측 커밋** | 예측 커밋이 `server.c`·`client.c`보다 먼저 있다 |
+| 11/28 | 전송 계층 확장, 그림판·서버·클라이언트·검증기·실행기·그리기 클라이언트 구현, `make test` | `make test` FAIL 0, 1024 클라이언트 체크섬 일치 |
+| 11/28 | 2단계 본 측정(측정용 컴퓨터, 조건마다 30번) | 원자료와 요약표 |
+| 11/29 | 예측 대비 비교, 원인 확인 실험, 설계 개선과 전후 비교, IPC 선택 가이드라인 | [2단계 측정 결과](../measurement/stage2.md) |
+| 11/29 ~ 11/30 | 최종보고서, 발표자료, 발표 대본, 데모 영상, 제출 tar | [제출 준비](../submission/README.md)의 점검표 |
 
-11월 12일에 일정을 다시 잡았다. 제출일(11/30)은 그대로 두고 앞 단계를 2~4일씩 미뤘다. 그만큼 뒤가 줄었다.
+## 리스크와 미결정
 
-- 구현(T4)은 예측 커밋 다음 날부터 5일이다. 줄어든 시간은 예측과 무관한 `canvas.c`, `util.c`, `verify.c`를 T1~T3 기간에 미리 만들어 메운다. `server.c`와 `client.c`만 예측 뒤에 시작한다.
-- 분석(T5)과 개선(T6)은 2일씩, 보고서와 발표(T7)는 3일이다. 더 밀리면 T3 기한(11/18)은 지키고 T4의 범위를 줄인다.
-
-## 검증 전략
-
-[테스트 명세](../verification/README.md)에서 관리한다.
-
-## 리스크 및 미결정
-
-| 항목 | 상태 | 재개 조건 |
+| 번호 | 내용 | 정하는 방법 |
 | --- | --- | --- |
-| FIFO를 pipe 버전으로 인정하는지 | 미확인 | 교수님 답변. 1단계는 익명 pipe(`upipe`)도 함께 잰다(#25). 인정하지 않으면 2단계를 서버가 `fork`한 클라이언트와 익명 pipe로 잇는 구조로 다시 설계하고 `transport_upipe.c`에서 시작한다 |
-| System V 메시지 한도(`msgmax`, `msgmnb`)를 올려서 잴지 | 결정: 기본값(8192B, 16384B)으로 잰다 | 1단계에서 둘 다 쟀다([mq 한도 실험](../measurement/stage1.md#mq-한도를-올리면-처리량은-늘고-단일-요청-지연은-나빠진다)). 상향은 처리량을 1.5~2배 늘리지만 클라이언트 1의 지연을 2~3.5배 늘리는 맞바꿈이고, 관리자 권한이 필요해 다른 컴퓨터에서 재현하기 어렵다. 상향 결과는 실험으로 함께 보고한다 |
-
-| 실패 | 점검 |
-| --- | --- |
-| 세 버전의 결과가 비슷하게 나온다 | 서버 연산이 IPC 비용을 덮는지 본다. DRAW 사각형을 줄이고 구간별 시간을 확인한다 |
-| 체크섬이 가끔 어긋난다 | 락 범위, 여러 타일의 잠금 순서, 응답 송신 락을 본다 |
-| 종료 뒤 자원이 남는다 | 신호 처리 스레드, 종료 순서, 비정상 종료 경로를 본다. 급하면 `make ipcclean` |
-| 측정값이 흔들린다 | CPU 주파수 설정, 다른 프로그램, 워밍업, 반복 횟수를 본다 |
+| R-1 | 클라이언트 1024개 프로세스(스레드 약 4,000개)가 논리 CPU 12개를 다툰다. 측정 잡음이 크다 | 조건마다 30번 반복하고 반복마다 IPC 순서를 돌린다. 실행 사이 편차를 함께 보고한다 |
+| R-2 | pipe는 FIFO 1024개에서 사용자별 파이프 버퍼 한도에 걸릴 수 있다 | 서버가 연 FIFO의 실제 버퍼 크기(`F_GETPIPE_SZ`)를 기록한다 |
+| R-3 | pipe 서버는 FIFO를 1000개 넘게 연다. 터미널의 기본 열린 파일 한도(1024)를 넘는다 | 서버가 시작할 때 soft 한도를 hard 한도까지 올린다 |
+| U-1 | 무엇을 개선할지 | 예측과 어긋난 원인을 확인한 뒤, 그 원인을 줄이는 쪽으로 정한다. 후보: mq 응답 큐 나누기, shm 요청 링 경쟁 줄이기, shm 응답 링 1개로 줄이기(메모리), 요청 묶어 보내기 |
+| U-2 | System V 메시지 한도(`msgmax`, `msgmnb`) | 1단계처럼 기본값으로 잰다. 올리려면 관리자 권한이 필요해 다른 컴퓨터에서 재현하기 어렵다(1단계 결정 그대로) |
