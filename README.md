@@ -141,7 +141,19 @@ kill -INT %1                             # 서버의 checksum 줄과
 
 ### 2단계 측정
 
-측정 방법은 [2단계 실험](docs/measurement/README.md#2단계-실험)에 있다. 측정 스크립트는 측정을 시작할 때 이 절에 적는다.
+측정 방법은 [2단계 실험](docs/measurement/README.md#2단계-실험)에, 결과와 분석은 [2단계 측정 결과](docs/measurement/stage2.md)에 있다. 측정용 컴퓨터에서 다른 무거운 작업을 멈추고 돌린다. 커밋하지 않은 코드 변경이 있으면 멈춘다.
+
+```bash
+scripts/app-bench.sh                                  # 실험 11개, 조건마다 30번 (약 3시간) → results/app/<실험>.csv
+EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh   # 본 측정 뒤 추가한 원인 확인 실험 4개 (약 30분)
+REPS=2 EXPS="scale" OUT=/tmp/x scripts/app-bench.sh   # 일부만 짧게 (원자료로 쓰지 않음)
+python3 scripts/plot-app.py                           # 요약표와 그래프 → docs/assets/app/
+scripts/race-start.sh -n 150 -l 12                    # 시작 구간 경쟁 재현 실험 (검증 문서)
+scripts/syscall-count.sh 20000 -m 90 -f 16            # 요청 하나당 시스템 콜 수 (strace -c)
+scripts/demo-check.sh 1024 3                          # 데모: 세 버전 × 클라이언트 1024개, 체크섬과 남은 자원
+```
+
+설계 개선은 서버 환경 변수로 켠다(기본값은 처음 설계). `OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 ./bin/server_mq`(mq 응답 큐 8개 + 요청 큐 입장 제한), `OSP_SHM_REQ=per ./bin/server_shm`(shm 클라이언트별 요청 링).
 
 ## 테스트
 
@@ -164,6 +176,7 @@ make test
 | [구현 계획](docs/design/plan.md) | 파일 책임, 역할, 일정, 리스크와 미결정 |
 | [측정 방법](docs/measurement/README.md) | 타임스탬프 위치, 통계, 1·2단계 실험, 원자료 형식 |
 | [1단계 측정 결과](docs/measurement/stage1.md) | 1단계 측정 기록, 결과, 해석 (보고서 2장) |
+| [2단계 측정 결과](docs/measurement/stage2.md) | 2단계 측정 기록, 예측 대비 실측, 원인 확인, 설계 개선 전후, IPC 선택 가이드라인 (보고서 6장) |
 | [테스트 명세](docs/verification/README.md) | 검증 항목과 판정 기준 |
 | [제출 준비](docs/submission/README.md) | 제출물, 보고서 절별 출처, 캡처 목록 |
 | [AI 활용 기록](docs/records/ai-log.md) | AI 사용 내용, AI가 틀린 사례, AI 코드의 결함 (보고서 8.2절) |
