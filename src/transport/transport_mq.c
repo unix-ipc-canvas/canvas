@@ -272,6 +272,14 @@ static size_t srv_sbuf_stride;
 static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static atomic_bool srv_opened;
+/*
+ * 깨우기(tp_server_wake)와 닫기(tp_server_close)를 한 번에 하나만 하게 한다.
+ * 수신 스레드는 깨우기 메시지 없이 srv_stopping 만 보고 먼저 끝날 수 있다. 그러면 깨우는 스레드가 아직 msgsnd 앞에
+ * 있는 동안 main 이 닫기까지 가서, 깨우기가 읽는 srv_req_q 를 닫기가 동기화 없이 -1 로 바꿨다(TSan 이 보고한 경쟁).
+ * 닫기는 이 mutex 안에서 srv_opened 를 내리므로, 그 뒤의 깨우기는 큐를 건드리지 않는다.
+ * 깨우기는 IPC_NOWAIT 로 보내 쥔 채 막히지 않는다.
+ */
+static pthread_mutex_t srv_wake_mtx = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool srv_sent[MAX_CLIENTS];        /* 응답을 보낸 적이 있다. 감시 스레드가 볼 대상 */
 static atomic_bool srv_dead[MAX_CLIENTS];        /* 감시 스레드가 죽었다고 본 클라이언트 */
 static watch_t srv_watch;
@@ -524,17 +532,23 @@ out:
  */
 void tp_server_wake(void)
 {
-    if (!atomic_load(&srv_opened)) return;
-    atomic_store(&srv_stopping, true);
+    pthread_mutex_lock(&srv_wake_mtx);         /* 닫기와 겹치지 않게 (srv_wake_mtx 설명) */
+    if (atomic_load(&srv_opened)) {
+        atomic_store(&srv_stopping, true);
 
-    struct { long mtype; uint32_t kind; uint32_t reserved; } w = { MTYPE_WAKE, FRAG_WAKE, 0 };
-    while (msgsnd(srv_req_q, &w, FRAG_HDR, IPC_NOWAIT) < 0 && errno == EINTR)
-        ;
+        struct { long mtype; uint32_t kind; uint32_t reserved; } w = { MTYPE_WAKE, FRAG_WAKE, 0 };
+        while (msgsnd(srv_req_q, &w, FRAG_HDR, IPC_NOWAIT) < 0 && errno == EINTR)
+            ;
+    }
+    pthread_mutex_unlock(&srv_wake_mtx);
 }
 
 void tp_server_close(void)
 {
-    if (!atomic_exchange(&srv_opened, false)) return;
+    pthread_mutex_lock(&srv_wake_mtx);         /* 진행 중인 깨우기가 끝난 뒤에 닫는다 */
+    bool was_open = atomic_exchange(&srv_opened, false);
+    pthread_mutex_unlock(&srv_wake_mtx);
+    if (!was_open) return;
     watch_stop(&srv_watch);
 
     /*
