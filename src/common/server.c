@@ -32,7 +32,7 @@
 
 static uint32_t opt_rooms = 8, opt_workers = 4, opt_tile = TILE_DEFAULT, opt_qcap = 4096, opt_maxcli = MAX_CLIENTS;
 static lock_mode_t opt_lock = LOCK_RW;
-static const char *opt_pgm, *opt_csv, *opt_exp = "app";
+static const char *opt_pgm, *opt_csv, *opt_exp = "app", *opt_expect;
 static long opt_run = 1;
 static bool opt_verbose;
 
@@ -325,7 +325,7 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
             "사용법: %s [-K 그림판] [-w 워커] [-l rw|mutex|room|none] [-t 타일] [-q 큐] [-N 클라이언트]\n"
-            "          [-p PGM|-] [-O CSV -e 실험 -R 반복] [-v]\n"
+            "          [-p PGM|-] [-O CSV -e 실험 -R 반복] [-X 검증기출력] [-v]\n"
             "  -K 1~%u (8)   -w 1~64 (4)   -l rw   -t 16~1024 2의 거듭제곱 (64)   -q 큐 칸 (4096)   -N 1~%u (%u)\n",
             prog, MAX_ROOMS, MAX_CLIENTS, MAX_CLIENTS);
 }
@@ -340,7 +340,31 @@ static int parse_u32(const char *s, uint32_t lo, uint32_t hi, uint32_t *out)
     return 0;
 }
 
-static void write_csv(void)
+/*
+ * -X 파일(검증기 출력)과 그림판별 체크섬을 비교한다. 1 = 같음, 0 = 다름, -1 = 파일 없음.
+ * 측정 스크립트가 서버를 끝내기 전에 검증기를 돌려 두면 CSV 서버 줄의 checksum_ok 칸에 남는다.
+ */
+static long check_expected(void)
+{
+    if (!opt_expect) return -1;
+    FILE *f = fopen(opt_expect, "r");
+    if (!f) return -1;
+    char line[128];
+    uint32_t seen = 0;
+    long ok = 1;
+    while (fgets(line, sizeof line, f)) {
+        unsigned r;
+        unsigned long long v;
+        if (sscanf(line, "checksum room=%u %llx", &r, &v) == 2) {
+            if (r >= opt_rooms || canvas_checksum(&C, r) != v) ok = 0;
+            seen++;
+        }
+    }
+    fclose(f);
+    return seen == opt_rooms ? ok : 0;
+}
+
+static void write_csv(long checksum_ok)
 {
     app_row_t r;
     app_row_init(&r);
@@ -354,6 +378,15 @@ static void write_csv(void)
     r.lock = lock_mode_name(opt_lock);
     r.tile = opt_tile;
     r.env = getenv("OSP_ENV_NOTE");
+    r.checksum_ok = checksum_ok;
+    /* 클라이언트 쪽 조건은 서버가 모르므로 측정 스크립트가 환경 변수로 알려 준 값을 그대로 적는다 (줄을 짝짓는 데만 쓴다) */
+    const char *e;
+    if ((e = getenv("OSP_CLIENTS"))) r.clients = atol(e);
+    if ((e = getenv("OSP_INFLIGHT"))) r.inflight = atol(e);
+    if ((e = getenv("OSP_RATE"))) r.rate_hz = atof(e);
+    if ((e = getenv("OSP_DRAW_PCT"))) r.draw_pct = atol(e);
+    if ((e = getenv("OSP_RECT"))) r.rect = atol(e);
+    if ((e = getenv("OSP_SNAP"))) r.snap = atol(e);
     if (M.marks >= 2) {
         usage_t u;
         usage_diff(&M.u1, &M.u0, &u);
@@ -385,7 +418,7 @@ static void write_csv(void)
 int main(int argc, char **argv)
 {
     int c;
-    while ((c = getopt(argc, argv, "K:w:l:t:q:N:p:O:e:R:vh")) != -1) {
+    while ((c = getopt(argc, argv, "K:w:l:t:q:N:p:O:e:R:X:vh")) != -1) {
         switch (c) {
         case 'K': if (parse_u32(optarg, 1, MAX_ROOMS, &opt_rooms) < 0) goto bad; break;
         case 'w': if (parse_u32(optarg, 1, 64, &opt_workers) < 0) goto bad; break;
@@ -397,6 +430,7 @@ int main(int argc, char **argv)
         case 'O': opt_csv = optarg; break;
         case 'e': opt_exp = optarg; break;
         case 'R': opt_run = strtol(optarg, NULL, 10); break;
+        case 'X': opt_expect = optarg; break;
         case 'v': opt_verbose = true; break;
         case 'h': usage(argv[0]); return 0;
         default: goto bad;
@@ -466,7 +500,10 @@ int main(int argc, char **argv)
     fflush(stdout);
     if (strcmp(opt_pgm, "-") != 0 && canvas_save_pgm(&C, 0, opt_pgm) < 0)
         fprintf(stderr, "server_%s: PGM %s 저장 실패\n", tp_name(), opt_pgm);
-    if (opt_csv) write_csv();
+    long cok = check_expected();
+    if (cok >= 0) printf("검증기와 비교: %s\n", cok ? "같음" : "다름");
+    fflush(stdout);
+    if (opt_csv) write_csv(cok);
     tp_server_close();
     fprintf(stderr, "server_%s: 끝\n", tp_name());
 
