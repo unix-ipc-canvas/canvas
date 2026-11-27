@@ -36,8 +36,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/prctl.h>
-#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -222,14 +220,6 @@ static int run_server(const char *dir, pid_t driver)
     sigaddset(&set, SIGTERM);
     sigaddset(&set, SIG_MARK);
     pthread_sigmask(SIG_BLOCK, &set, NULL);
-
-    /*
-     * 조정 프로세스가 먼저 죽으면(kill, kill -9) 아무도 서버를 끝내지 않아 전송 계층 자원(mq 큐 등)이 남는다.
-     * 부모가 죽을 때 SIGTERM 을 받게 해 두면 admin 스레드가 평소처럼 끝내고 자원을 정리한다.
-     * prctl 전에 이미 부모가 죽었을 수 있으므로 getppid 로 한 번 더 본다. SIGTERM 은 막혀 있어 보류된다.
-     */
-    prctl(PR_SET_PDEATHSIG, SIGTERM);
-    if (getppid() != driver) raise(SIGTERM);
 
     s.buf = malloc(MAX_PAYLOAD);
     if (!s.buf) {
@@ -786,18 +776,8 @@ static int wait_ready(child_t *ch, unsigned cnt, bool *ready, unsigned clients, 
     }
 }
 
-static void raise_fd_limit(unsigned clients)
-{
-    struct rlimit rl;
-    if (getrlimit(RLIMIT_NOFILE, &rl) < 0) return;
-    rlim_t want = (rlim_t)clients * 2 + 256;
-    if (rl.rlim_max != RLIM_INFINITY && want > rl.rlim_max) want = rl.rlim_max;
-    if (rl.rlim_cur < want) { rl.rlim_cur = want; setrlimit(RLIMIT_NOFILE, &rl); }
-}
-
 static int run_driver(const cfg_t *cfg)
 {
-    raise_fd_limit(cfg->clients);
     char dir[] = "/tmp/canvas_bench_XXXXXX";
     if (!mkdtemp(dir)) { perror("bench: mkdtemp"); return 1; }
 
@@ -837,9 +817,6 @@ static int run_driver(const cfg_t *cfg)
         }
         if (p == 0) {
             if (i == 0) _exit(run_server(dir, driver));
-            /* 클라이언트는 정리할 서버 자원이 없으므로 조정 프로세스가 죽으면 바로 끝난다 */
-            prctl(PR_SET_PDEATHSIG, SIGKILL);
-            if (getppid() != driver) _exit(1);
             uint64_t n = cfg->n / cfg->clients + (i - 1 < cfg->n % cfg->clients ? 1 : 0);
             _exit(run_client(cfg, i - 1, n, dir, driver));
         }

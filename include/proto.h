@@ -14,8 +14,7 @@
 #define CANVAS_W   1024u            /* 가로 칸 수 */
 #define CANVAS_H   1024u            /* 세로 칸 수, 한 칸 1바이트 → 전체 1MB */
 
-#define MAX_CLIENTS 256u            /* 동시에 붙을 수 있는 클라이언트 번호 0 .. MAX_CLIENTS-1 (11/24 16 → 256) */
-#define MAX_ROOMS   64u             /* 서버가 둘 수 있는 그림판(방) 수. 서버 -K 로 정한다 (11/24 추가) */
+#define MAX_CLIENTS 16u
 
 enum msg_type {
     REQ_HELLO    = 1,   /* 클라이언트 등록. 클라이언트의 첫 요청이다 (transport.h 의 약속) */
@@ -33,7 +32,7 @@ typedef struct {
     uint32_t client_id;     /* 0 .. MAX_CLIENTS-1 */
     uint64_t req_id;        /* 클라이언트가 붙이는 일련번호, 응답에 그대로 돌아옴. 시작값은 세션마다 다르게 */
     uint32_t payload_len;   /* 머리 뒤에 붙는 바이트 수. MAX_PAYLOAD 이하 */
-    uint32_t reserved;      /* 요청: 그림판(방) 번호 0 .. 방 수-1. 방 하나면 0. 응답: 0 */
+    uint32_t reserved;
 } msg_hdr_t;
 
 /* REQ_DRAW payload */

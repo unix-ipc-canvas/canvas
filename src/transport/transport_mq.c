@@ -28,21 +28,6 @@
  * DECISION: 응답 큐는 클라이언트마다 두지 않고 하나를 mtype 으로 나눈다. key 가 60020~60029 의 10개뿐이라
  *   클라이언트 16개에 큐를 하나씩 줄 수 없다 (shm 버전이 4개를 쓴다).
  * DECISION: msgsnd 는 mtype 이 앞에 붙은 버퍼를 요구하므로 보낼 때와 받을 때 조각 버퍼를 거쳐 한 번씩 복사한다.
- *
- * 큐 나누기 (11/24, 클라이언트 수 확장 실험. 서버 환경 변수 OSP_MQ_QUEUES=S, 기본 1 = 위와 같다)
- *   큐 하나의 용량은 msgmnb(기본 16KB)다. 클라이언트 수백 개가 동시 요청을 띄우면 요청 큐가 가득 차고, 가득 찬 큐에서
- *   서버가 메시지 하나를 꺼낼 때마다 커널이 기다리던 송신자를 모두 깨운다(자리가 하나만 났는데 모두 다시 시도하고
- *   다시 잠든다). 그래서 꺼내기 한 번의 비용이 클라이언트 수에 비례하고, 수신 스레드 하나가 커널에서 시간을 다 쓴다.
- *   S > 1 이면 요청 큐와 응답 큐를 S 개씩 두고 클라이언트 id 는 id % S 번 큐 쌍을 쓴다. 큐 하나에 붙는 송신자가 1/S 로,
- *   용량이 S 배로 는다. 서버는 요청 큐마다 펌프 스레드를 하나씩 두어 조각을 붙이고, 완성된 요청을 내부 유한 버퍼
- *   (mutex + 조건변수 2개)에 넣는다. tp_recv_req 는 그 버퍼에서 꺼낸다. 클라이언트 하나는 늘 같은 큐로 보내므로
- *   클라이언트별 조각 붙이기 자리는 펌프 하나만 건드린다.
- *   0 번 큐는 지금처럼 key IPC_KEY(0), IPC_KEY(1)이고 나머지는 key 범위(10개)를 넘지 않도록 IPC_PRIVATE 로 만든다.
- *   클라이언트가 번호를 알 수 있게 서버가 잠금 파일의 SHARD_OFF 바이트 뒤에 적는다(바이트 잠금은 앞쪽 0 .. MAX_CLIENTS
- *   만 쓴다). key 가 없어 ipcs 로는 우리 것인지 알 수 없으므로, 서버가 kill -9 로 죽어 남은 큐는 그 기록으로 지운다:
- *   서버가 죽은 것을 본 클라이언트(감시 스레드)가 모든 쌍을, 다음 서버가 앞 서버의 기록을, make ipcclean 이 잠금 파일을
- *   지우기 전에 기록을 읽어 지운다.
- *   펌프가 받은 너무 큰 요청은 버리고 EMSGSIZE 로, 그 밖의 수신 오류는 그 errno 로 tp_recv_req 가 돌려준다(서버가 센다).
  */
 #define _GNU_SOURCE             /* F_OFD_SETLK, F_OFD_GETLK */
 #include <errno.h>
@@ -68,22 +53,6 @@
 #define KEY_REQ   IPC_KEY(0)
 #define KEY_RESP  IPC_KEY(1)
 
-/*
- * 잠금 파일 안 큐 번호 기록의 위치와 꼴. Makefile 의 ipcclean 이 같은 위치(MQ_REC_OFF)에서 4바이트 정수 130개
- * (magic, n, qid[64], rqid[64])로 읽어 지우므로, 바꾸면 Makefile 도 함께 고친다.
- */
-#define MAX_SHARDS 64u
-#define SHARD_OFF  ((off_t)5120)
-_Static_assert(MAX_CLIENTS + 1 < 5120, "잠금 바이트와 샤드 기록이 겹치면 안 된다");
-#define SHARD_MAGIC 0x4d515332u                    /* "MQS2" */
-typedef struct {
-    uint32_t magic;
-    uint32_t n;
-    int32_t  qid[MAX_SHARDS];       /* 응답 큐 */
-    int32_t  rqid[MAX_SHARDS];      /* 요청 큐 */
-} shard_rec_t;
-_Static_assert(sizeof(shard_rec_t) == 4 * (2 + 2 * MAX_SHARDS), "Makefile 의 ipcclean 이 4바이트 정수 130개로 읽는다");
-
 #define PATH_LEN 64
 #define DEFAULT_MSGMAX 8192u
 
@@ -106,7 +75,6 @@ typedef struct {
 
 #define LOCK_SERVER      ((off_t)0)
 #define LOCK_CLIENT(id)  ((off_t)(id) + 1)
-_Static_assert(SHARD_OFF > LOCK_CLIENT(MAX_CLIENTS - 1), "큐 번호 기록이 바이트 잠금 자리와 겹친다");
 
 static void lock_path(char *buf) { snprintf(buf, PATH_LEN, "/tmp/osproject_%d_mq.lock", TEAM_NO); }
 
@@ -294,10 +262,7 @@ void tp_postfork(void) { }
  * ================================================================ */
 
 static int srv_req_q = -1;
-static int srv_req_qs[MAX_SHARDS];               /* [0] 은 srv_req_q 와 같다 */
-static int srv_resp_qs[MAX_SHARDS] = { -1 };
-static uint32_t srv_nshard = 1;
-#define SRV_RESP_Q(id) srv_resp_qs[(id) % srv_nshard]
+static int srv_resp_q = -1;
 static int srv_lock_fd = -1;
 static size_t srv_limit;                         /* 받는 조각 버퍼 크기 */
 static size_t srv_chunk;                         /* 응답 큐에 보내는 조각 크기 */
@@ -307,21 +272,13 @@ static size_t srv_sbuf_stride;
 static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static atomic_bool srv_opened;
-/*
- * 깨우기(tp_server_wake)와 닫기(tp_server_close)를 한 번에 하나만 하게 한다.
- * 수신 스레드는 깨우기 메시지 없이 srv_stopping 만 보고 먼저 끝날 수 있다. 그러면 깨우는 스레드가 아직 msgsnd 앞에
- * 있는 동안 main 이 닫기까지 가서, 깨우기가 읽는 srv_req_q 를 닫기가 동기화 없이 -1 로 바꿨다(TSan 이 보고한 경쟁).
- * 닫기는 이 mutex 안에서 srv_opened 를 내리므로, 그 뒤의 깨우기는 큐를 건드리지 않는다.
- * 깨우기는 IPC_NOWAIT 로 보내 쥔 채 막히지 않는다.
- */
-static pthread_mutex_t srv_wake_mtx = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool srv_sent[MAX_CLIENTS];        /* 응답을 보낸 적이 있다. 감시 스레드가 볼 대상 */
 static atomic_bool srv_dead[MAX_CLIENTS];        /* 감시 스레드가 죽었다고 본 클라이언트 */
 static watch_t srv_watch;
 
 /*
  * 여러 조각으로 온 요청을 클라이언트별로 붙이는 자리.
- * DECISION: 클라이언트마다 MAX_PAYLOAD 를 한 번에 잡아 둔다 (MAX_CLIENTS × 1MB). 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
+ * DECISION: 클라이언트마다 MAX_PAYLOAD 를 한 번에 잡아 둔다 (16MB). 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
  *   쓰지 않은 페이지는 실제 메모리를 차지하지 않는다. 응용의 요청은 모두 조각 하나라서 이 자리를 건드리지 않는다.
  */
 static char *srv_asm_buf;
@@ -379,10 +336,7 @@ static void server_release(void)
     char lp[PATH_LEN];
     lock_path(lp);
     if (srv_req_q >= 0)  { msgctl(srv_req_q, IPC_RMID, NULL);  srv_req_q = -1; }
-    for (uint32_t i = 0; i < srv_nshard; i++) {
-        if (srv_resp_qs[i] >= 0) { msgctl(srv_resp_qs[i], IPC_RMID, NULL); srv_resp_qs[i] = -1; }
-        if (i > 0 && srv_req_qs[i] >= 0) { msgctl(srv_req_qs[i], IPC_RMID, NULL); srv_req_qs[i] = -1; }
-    }
+    if (srv_resp_q >= 0) { msgctl(srv_resp_q, IPC_RMID, NULL); srv_resp_q = -1; }
     if (srv_lock_fd >= 0) {
         unlink(lp);                      /* 잠금을 쥔 채로 이름부터 지운다 */
         close(srv_lock_fd);
@@ -412,7 +366,7 @@ static bool srv_watch_tick(void)
         atomic_store(&srv_dead[id], true);
         bool idle = pthread_mutex_trylock(&srv_resp_mtx[id]) == 0;
         if (byte_locked(srv_lock_fd, LOCK_CLIENT(id)) == 0)
-            purge(SRV_RESP_Q(id), MTYPE_OF(id), (frag_t *)&junk, sizeof junk.data);
+            purge(srv_resp_q, MTYPE_OF(id), (frag_t *)&junk, sizeof junk.data);
         if (idle) {
             atomic_store(&srv_sent[id], false);
             pthread_mutex_unlock(&srv_resp_mtx[id]);
@@ -421,49 +375,18 @@ static bool srv_watch_tick(void)
     return true;
 }
 
-static int pumps_start(void);
-static void pumps_stop(void);
-
 int tp_server_open(void)
 {
     srv_lock_fd = server_lock();         /* 서버가 이미 떠 있으면 EADDRINUSE */
     if (srv_lock_fd < 0) return -1;
 
-    /* 응답 큐 수. 숫자가 아니거나 범위 밖이면 열지 않는다 */
-    srv_nshard = 1;
-    const char *ev = getenv("OSP_MQ_QUEUES");
-    if (ev && *ev) {
-        char *end;
-        unsigned long v = strtoul(ev, &end, 10);
-        if (*end || v < 1 || v > MAX_SHARDS) { errno = EINVAL; goto fail; }
-        srv_nshard = (uint32_t)v;
-    }
-    for (uint32_t i = 0; i < MAX_SHARDS; i++) srv_resp_qs[i] = srv_req_qs[i] = -1;
-
-    /* 지난 서버가 kill -9 로 남긴 IPC_PRIVATE 큐를 지운다. 잠금 파일에 적힌 번호다 */
-    shard_rec_t old;
-    if (pread(srv_lock_fd, &old, sizeof old, SHARD_OFF) == (ssize_t)sizeof old && old.magic == SHARD_MAGIC)
-        for (uint32_t i = 1; i < old.n && i < MAX_SHARDS; i++) { msgctl(old.qid[i], IPC_RMID, NULL); msgctl(old.rqid[i], IPC_RMID, NULL); }
-
-    /* 응답 큐를 모두 만들고 번호를 적은 뒤에 요청 큐를 만든다. 클라이언트는 요청 큐가 있어야 붙는다 */
-    srv_resp_qs[0] = make_queue(KEY_RESP);
-    if (srv_resp_qs[0] < 0) goto fail;
-    shard_rec_t rec = { .magic = SHARD_MAGIC, .n = srv_nshard };
-    for (uint32_t i = 0; i < MAX_SHARDS; i++) rec.qid[i] = rec.rqid[i] = -1;
-    rec.qid[0] = srv_resp_qs[0];
-    for (uint32_t i = 1; i < srv_nshard; i++) {
-        if ((srv_resp_qs[i] = msgget(IPC_PRIVATE, IPC_CREAT | 0600)) < 0) goto fail;
-        if ((srv_req_qs[i] = msgget(IPC_PRIVATE, IPC_CREAT | 0600)) < 0) goto fail;
-        rec.qid[i] = srv_resp_qs[i];
-        rec.rqid[i] = srv_req_qs[i];
-    }
-    if (pwrite(srv_lock_fd, &rec, sizeof rec, SHARD_OFF) != (ssize_t)sizeof rec) goto fail;
     srv_req_q = make_queue(KEY_REQ);
     if (srv_req_q < 0) goto fail;
-    srv_req_qs[0] = srv_req_q;
+    srv_resp_q = make_queue(KEY_RESP);
+    if (srv_resp_q < 0) goto fail;
 
     srv_limit = frag_limit();
-    if (send_chunk(srv_resp_qs[0], srv_limit, &srv_chunk) < 0) goto fail;
+    if (send_chunk(srv_resp_q, srv_limit, &srv_chunk) < 0) goto fail;
 
     srv_sbuf_stride = (sizeof(long) + srv_chunk + 15) & ~(size_t)15;
     srv_rbuf = frag_alloc(srv_limit);
@@ -484,16 +407,6 @@ int tp_server_open(void)
         errno = e;
         goto fail;
     }
-    if (srv_nshard > 1 && pumps_start() < 0) {
-        int e = errno;
-        msgctl(srv_req_q, IPC_RMID, NULL);           /* 펌프를 깨워 끝낸다 */
-        for (uint32_t i = 1; i < srv_nshard; i++) msgctl(srv_req_qs[i], IPC_RMID, NULL);
-        pumps_stop();
-        watch_stop(&srv_watch);
-        for (uint32_t i = 0; i < MAX_CLIENTS; i++) pthread_mutex_destroy(&srv_resp_mtx[i]);
-        errno = e;
-        goto fail;
-    }
     atomic_store(&srv_opened, true);
     return 0;
 
@@ -505,41 +418,22 @@ fail:;
 }
 
 /*
- * 큐 맨 앞에 받는 버퍼(srv_limit)보다 큰 조각이 있다. 서버를 띄운 뒤 msgmax 를 올리면 그 뒤에 붙은 클라이언트가
- * 더 큰 조각으로 보낸다. MSG_NOERROR 없이 받으면 E2BIG 로 실패하고 조각이 그대로 남아, 다시 받아도 같은 실패가
- * 끝없이 되풀이된다. 잘라서 꺼내 버리고 그 클라이언트가 붙이던 요청도 버린다. 받는 쪽은 큐마다 하나라 맨 앞은 그 조각이다.
- * -1, errno = EMSGSIZE (transport.h: cap 보다 큰 메시지는 버리고 다음 메시지는 정상으로 받는다)
- */
-static ssize_t drop_big(int qid, frag_t *rb)
-{
-    if (msgrcv(qid, rb, srv_limit, 0, IPC_NOWAIT | MSG_NOERROR) >= 0 && rb->mtype >= 1 && rb->mtype <= (long)MAX_CLIENTS)
-        srv_asm[rb->mtype - 1].active = false;
-    errno = EMSGSIZE;
-    return -1;
-}
-
-/*
  * 요청 1개 받기. 수신 스레드 하나만 부른다.
  * tp_server_wake 로 깨워지거나 큐가 지워지면 -1, errno = ECANCELED.
  * cap 보다 큰 요청은 버리고 -1, errno = EMSGSIZE.
  */
-static ssize_t take_one(int qid, frag_t *srv_rbuf, bool pump, msg_hdr_t *hdr, void *payload, size_t cap)
+ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
 {
     for (;;) {
-        if (!pump && atomic_load(&srv_stopping)) { errno = ECANCELED; return -1; }
+        if (atomic_load(&srv_stopping)) { errno = ECANCELED; return -1; }
 
-        ssize_t n = msgrcv(qid, srv_rbuf, srv_limit, 0, 0);
+        ssize_t n = msgrcv(srv_req_q, srv_rbuf, srv_limit, 0, 0);
         if (n < 0) {
             if (errno == EINTR) continue;
-            if (errno == E2BIG) return drop_big(qid, srv_rbuf);
             if (errno == EIDRM || errno == EINVAL) errno = ECANCELED;
             return -1;
         }
-        if (srv_rbuf->mtype == MTYPE_WAKE) {
-            if (pump) continue;                      /* 펌프는 큐가 지워질 때 끝난다. 깨우기는 내부 버퍼로 한다 */
-            errno = ECANCELED;
-            return -1;
-        }
+        if (srv_rbuf->mtype == MTYPE_WAKE) { errno = ECANCELED; return -1; }
         if (srv_rbuf->mtype < 1 || srv_rbuf->mtype > (long)MAX_CLIENTS) continue;
         if ((size_t)n < FRAG_HDR) continue;
 
@@ -593,142 +487,6 @@ static ssize_t take_one(int qid, frag_t *srv_rbuf, bool pump, msg_hdr_t *hdr, vo
     }
 }
 
-
-/* ---- 큐를 나눴을 때(S > 1): 펌프 스레드와 내부 유한 버퍼 ---- */
-
-#define PQ_CAP 4096u
-#define PQ_INL 64u
-static struct {
-    msg_hdr_t hdr;
-    size_t    len;
-    char      inl[PQ_INL];
-    char     *data;
-    int       err;              /* 0 이 아니면 요청이 아니라 펌프가 알리는 실패다. tp_recv_req 가 이 errno 로 돌려준다 */
-} pq[PQ_CAP];
-static unsigned pq_head, pq_count;
-static pthread_mutex_t pq_mtx = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  pq_not_empty = PTHREAD_COND_INITIALIZER, pq_not_full = PTHREAD_COND_INITIALIZER;
-static bool pq_closed;
-static pthread_t pump_th[MAX_SHARDS];
-static uint32_t n_pumps;
-
-/* 내부 버퍼에 하나 넣는다. 가득 차 있으면 자리가 날 때까지 기다린다. 닫혔으면 false (data 는 부른 쪽이 푼다) */
-static bool pq_put(const msg_hdr_t *h, size_t len, const char *inl, char *data, int err)
-{
-    pthread_mutex_lock(&pq_mtx);
-    while (pq_count == PQ_CAP && !pq_closed) pthread_cond_wait(&pq_not_full, &pq_mtx);
-    if (pq_closed) { pthread_mutex_unlock(&pq_mtx); return false; }
-    unsigned t = (pq_head + pq_count) % PQ_CAP;
-    pq[t].hdr = *h;
-    pq[t].len = len;
-    pq[t].data = data;
-    pq[t].err = err;
-    if (len > 0 && !data && inl) memcpy(pq[t].inl, inl, len);
-    pq_count++;
-    pthread_cond_signal(&pq_not_empty);
-    pthread_mutex_unlock(&pq_mtx);
-    return true;
-}
-
-/*
- * 실패도 내부 버퍼로 알린다. 큐가 하나일 때 수신 스레드가 받는 것과 같게, 너무 큰 요청은 EMSGSIZE(서버가 버린 요청으로
- * 세고 계속 받는다), 그 밖의 오류는 그 errno(서버 오류로 끝낸다)로 tp_recv_req 가 돌려준다. 실패를 버리고 곧바로 다시
- * 받으면, 계속되는 오류에서 CPU 하나를 다 쓰며 그 큐의 요청을 영영 처리하지 못한다.
- */
-static void *pump_main(void *arg)
-{
-    uint32_t i = (uint32_t)(uintptr_t)arg;
-    const msg_hdr_t none = { 0 };
-    frag_t *rb = frag_alloc(srv_limit);
-    char *tmp = malloc(MAX_PAYLOAD);
-    if (!rb || !tmp) {
-        free(rb);
-        free(tmp);
-        pq_put(&none, 0, NULL, NULL, ENOMEM);
-        return NULL;
-    }
-    for (;;) {
-        msg_hdr_t h;
-        ssize_t n = take_one(srv_req_qs[i], rb, true, &h, tmp, MAX_PAYLOAD);
-        if (n < 0) {
-            int e = errno;
-            if (e == ECANCELED) break;               /* 큐가 지워졌다 = 닫는 중 */
-            if (!pq_put(&none, 0, NULL, NULL, e) || e != EMSGSIZE) break;
-            continue;
-        }
-        char *copy = NULL;
-        if ((size_t)n > PQ_INL) {
-            if (!(copy = malloc((size_t)n))) {       /* 요청 하나를 잃는다. 응답을 기다릴 클라이언트를 두고 넘어가지 않는다 */
-                pq_put(&none, 0, NULL, NULL, ENOMEM);
-                break;
-            }
-            memcpy(copy, tmp, (size_t)n);
-        }
-        if (!pq_put(&h, (size_t)n, copy ? NULL : tmp, copy, 0)) { free(copy); break; }
-    }
-    free(rb);
-    free(tmp);
-    return NULL;
-}
-
-static int pumps_start(void)
-{
-    pq_head = pq_count = 0;
-    pq_closed = false;
-    n_pumps = 0;
-    for (uint32_t i = 0; i < srv_nshard; i++) {
-        int e = pthread_create(&pump_th[i], NULL, pump_main, (void *)(uintptr_t)i);
-        if (e) { errno = e; return -1; }
-        n_pumps++;
-    }
-    return 0;
-}
-
-/* 큐를 지운 뒤에 부른다. 펌프는 msgrcv 의 EIDRM 으로, 버퍼가 가득 차 기다리던 펌프는 pq_closed 로 끝난다 */
-static void pumps_stop(void)
-{
-    pthread_mutex_lock(&pq_mtx);
-    pq_closed = true;
-    pthread_cond_broadcast(&pq_not_full);
-    pthread_cond_broadcast(&pq_not_empty);
-    pthread_mutex_unlock(&pq_mtx);
-    for (uint32_t i = 0; i < n_pumps; i++) pthread_join(pump_th[i], NULL);
-    n_pumps = 0;
-    for (; pq_count; pq_count--, pq_head = (pq_head + 1) % PQ_CAP) free(pq[pq_head].data);
-}
-
-ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
-{
-    if (srv_nshard == 1) return take_one(srv_req_q, srv_rbuf, false, hdr, payload, cap);
-
-    pthread_mutex_lock(&pq_mtx);
-    while (pq_count == 0 && !pq_closed && !atomic_load(&srv_stopping)) pthread_cond_wait(&pq_not_empty, &pq_mtx);
-    if (pq_count == 0 || atomic_load(&srv_stopping)) {
-        pthread_mutex_unlock(&pq_mtx);
-        errno = ECANCELED;
-        return -1;
-    }
-    unsigned k = pq_head;
-    msg_hdr_t h = pq[k].hdr;
-    size_t len = pq[k].len;
-    char *data = pq[k].data;
-    int err = pq[k].err;
-    char inl[PQ_INL];
-    if (err == 0 && len > 0 && !data) memcpy(inl, pq[k].inl, len);
-    pq_head = (pq_head + 1) % PQ_CAP;
-    pq_count--;
-    pthread_cond_signal(&pq_not_full);
-    pthread_mutex_unlock(&pq_mtx);
-
-    *hdr = h;
-    if (err) { errno = err; return -1; }             /* 펌프가 알린 실패 (pump_main 설명) */
-    ssize_t rc = (ssize_t)len;
-    if (len > cap) { errno = EMSGSIZE; rc = -1; }
-    else if (len) memcpy(payload, data ? data : inl, len);
-    free(data);
-    return rc;
-}
-
 /*
  * hdr->client_id 에게 응답을 보낸다. 여러 워커가 동시에 불러도 된다.
  * 그 클라이언트가 죽었으면 -1, errno = EPIPE. 이미 넣은 조각은 큐에서 꺼내 버린다.
@@ -749,10 +507,10 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
         if (byte_locked(srv_lock_fd, LOCK_CLIENT(id)) == 1) atomic_store(&srv_dead[id], false);
         else { errno = EPIPE; goto out; }
     }
-    rc = send_msg(SRV_RESP_Q(id), MTYPE_OF(id), f, srv_chunk, hdr, payload, &srv_dead[id]);
+    rc = send_msg(srv_resp_q, MTYPE_OF(id), f, srv_chunk, hdr, payload, &srv_dead[id]);
     if (rc < 0 && errno == EPIPE && atomic_load(&srv_opened)) {
         /* 보내다 만 조각을 치운다. mutex 를 잡고 있어서 새 클라이언트의 응답은 아직 큐에 없다 */
-        purge(SRV_RESP_Q(id), MTYPE_OF(id), f, srv_chunk);
+        purge(srv_resp_q, MTYPE_OF(id), f, srv_chunk);
         errno = EPIPE;
     }
 out:
@@ -766,28 +524,17 @@ out:
  */
 void tp_server_wake(void)
 {
-    pthread_mutex_lock(&srv_wake_mtx);         /* 닫기와 겹치지 않게 (srv_wake_mtx 설명) */
-    if (atomic_load(&srv_opened)) {
-        atomic_store(&srv_stopping, true);
+    if (!atomic_load(&srv_opened)) return;
+    atomic_store(&srv_stopping, true);
 
-        struct { long mtype; uint32_t kind; uint32_t reserved; } w = { MTYPE_WAKE, FRAG_WAKE, 0 };
-        while (msgsnd(srv_req_q, &w, FRAG_HDR, IPC_NOWAIT) < 0 && errno == EINTR)
-            ;
-        if (srv_nshard > 1) {                        /* 내부 버퍼에서 기다리는 수신 스레드를 깨운다 */
-            pthread_mutex_lock(&pq_mtx);
-            pthread_cond_broadcast(&pq_not_empty);
-            pthread_mutex_unlock(&pq_mtx);
-        }
-    }
-    pthread_mutex_unlock(&srv_wake_mtx);
+    struct { long mtype; uint32_t kind; uint32_t reserved; } w = { MTYPE_WAKE, FRAG_WAKE, 0 };
+    while (msgsnd(srv_req_q, &w, FRAG_HDR, IPC_NOWAIT) < 0 && errno == EINTR)
+        ;
 }
 
 void tp_server_close(void)
 {
-    pthread_mutex_lock(&srv_wake_mtx);         /* 진행 중인 깨우기가 끝난 뒤에 닫는다 */
-    bool was_open = atomic_exchange(&srv_opened, false);
-    pthread_mutex_unlock(&srv_wake_mtx);
-    if (!was_open) return;
+    if (!atomic_exchange(&srv_opened, false)) return;
     watch_stop(&srv_watch);
 
     /*
@@ -795,11 +542,7 @@ void tp_server_close(void)
      * 클라이언트의 tp_recv_resp 는 ECONNRESET, tp_send_req 는 EPIPE 로 끝난다.
      */
     msgctl(srv_req_q, IPC_RMID, NULL);
-    for (uint32_t i = 0; i < srv_nshard; i++) {
-        msgctl(srv_resp_qs[i], IPC_RMID, NULL);
-        if (i > 0) msgctl(srv_req_qs[i], IPC_RMID, NULL);
-    }
-    if (srv_nshard > 1) pumps_stop();               /* 펌프들이 EIDRM 으로 깨어나 끝난다 */
+    msgctl(srv_resp_q, IPC_RMID, NULL);
 
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
         pthread_mutex_lock(&srv_resp_mtx[i]);        /* 보내던 워커가 빠져나오기를 기다린다 */
@@ -807,15 +550,8 @@ void tp_server_close(void)
         pthread_mutex_destroy(&srv_resp_mtx[i]);
     }
     srv_req_q = -1;
-    for (uint32_t i = 0; i < srv_nshard; i++) srv_resp_qs[i] = srv_req_qs[i] = -1;
+    srv_resp_q = -1;
     server_release();
-}
-
-/* 클라이언트 자리 잠금(바이트 LOCK_CLIENT(id))은 그 프로세스가 끝나면 커널이 푼다 */
-int tp_client_alive(uint32_t id)
-{
-    if (id >= MAX_CLIENTS || srv_lock_fd < 0) return -1;
-    return byte_locked(srv_lock_fd, LOCK_CLIENT(id));
 }
 
 /* ================================================================
@@ -833,24 +569,17 @@ static frag_t *cli_rbuf;
 static pthread_mutex_t cli_send_mtx = PTHREAD_MUTEX_INITIALIZER;
 static int cli_opened;
 static watch_t cli_watch;
-static int cli_key_req_q = -1, cli_key_resp_q = -1;  /* key 로 찾은 0 번 쌍 */
-static shard_rec_t cli_rec;                      /* 큐를 나눴으면 열 때 읽은 서버의 기록 (cli_rec.n > 1) */
 
 /*
- * 클라이언트 감시: 서버가 큐를 지우지 못하고 죽었으면(kill -9) 그 서버가 만든 큐를 모두 지운다.
- * 이 클라이언트와 다른 클라이언트들(다른 쌍의 클라이언트도)의 기다리던 송신·수신이 모두 깨어난다.
- * 큐를 나눈 서버의 key 없는 큐는 아무도 지우지 않으면 make ipcclean 전까지 남으므로 내 쌍이 아니어도 지운다.
+ * 클라이언트 감시: 서버가 큐를 지우지 못하고 죽었으면(kill -9) 남은 큐를 지운다.
+ * 이 클라이언트와 다른 클라이언트들의 기다리던 송신·수신이 모두 깨어난다.
  * 열 때 받아 둔 큐 번호로만 지운다. 그 뒤에 새로 뜬 서버의 큐는 번호가 달라 건드리지 않는다.
  */
 static bool cli_watch_tick(void)
 {
     if (byte_locked(cli_lock_fd, LOCK_SERVER) != 0) return true;
-    msgctl(cli_key_req_q, IPC_RMID, NULL);
-    msgctl(cli_key_resp_q, IPC_RMID, NULL);
-    for (uint32_t i = 1; cli_rec.n > 1 && i < cli_rec.n; i++) {
-        msgctl(cli_rec.qid[i], IPC_RMID, NULL);
-        msgctl(cli_rec.rqid[i], IPC_RMID, NULL);
-    }
+    msgctl(cli_req_q, IPC_RMID, NULL);
+    msgctl(cli_resp_q, IPC_RMID, NULL);
     return false;
 }
 
@@ -871,6 +600,7 @@ int tp_client_open(uint32_t client_id)
     }
     /* 잠금 파일은 있는데 서버 자리가 비었다 = 서버가 비정상 종료했다 */
     if (byte_locked(cli_lock_fd, LOCK_SERVER) != 1) { errno = ECONNREFUSED; goto fail; }
+
     if (lock_byte(cli_lock_fd, LOCK_CLIENT(client_id)) < 0) {
         if (errno == EAGAIN || errno == EACCES) errno = EADDRINUSE;
         goto fail;
@@ -881,22 +611,6 @@ int tp_client_open(uint32_t client_id)
     if (cli_req_q < 0 || cli_resp_q < 0) {
         if (errno == ENOENT) errno = ECONNREFUSED;
         goto fail;
-    }
-    /*
-     * 응답 큐가 여럿이면 서버가 잠금 파일에 적은 번호에서 내 것(id % S)을 고른다. 요청 큐보다 먼저 적힌다.
-     * 기록은 감시가 서버가 죽은 것을 보면 모든 쌍을 지우는 데도 쓴다.
-     */
-    cli_key_req_q = cli_req_q;
-    cli_key_resp_q = cli_resp_q;
-    shard_rec_t rec;
-    cli_rec.n = 0;
-    if (pread(cli_lock_fd, &rec, sizeof rec, SHARD_OFF) == (ssize_t)sizeof rec && rec.magic == SHARD_MAGIC &&
-        rec.n > 1 && rec.n <= MAX_SHARDS) {
-        cli_rec = rec;
-        if (client_id % rec.n != 0) {               /* 0 번은 key 로 찾은 큐 그대로 */
-            cli_resp_q = rec.qid[client_id % rec.n];
-            cli_req_q = rec.rqid[client_id % rec.n];
-        }
     }
 
     cli_limit = frag_limit();
@@ -921,8 +635,7 @@ fail:;
     free(cli_sbuf); cli_sbuf = NULL;
     free(cli_rbuf); cli_rbuf = NULL;
     close(cli_lock_fd); cli_lock_fd = -1;
-    cli_req_q = cli_resp_q = cli_key_req_q = cli_key_resp_q = -1;
-    cli_rec.n = 0;
+    cli_req_q = cli_resp_q = -1;
     errno = e;
     return -1;
 }
@@ -992,7 +705,6 @@ void tp_client_close(void)
     close(cli_lock_fd); cli_lock_fd = -1;            /* 클라이언트 자리 잠금이 풀린다 */
     free(cli_sbuf); cli_sbuf = NULL;
     free(cli_rbuf); cli_rbuf = NULL;
-    cli_req_q = cli_resp_q = cli_key_req_q = cli_key_resp_q = -1;
-    cli_rec.n = 0;
+    cli_req_q = cli_resp_q = -1;
     cli_opened = 0;
 }
