@@ -147,7 +147,7 @@ void csv_row_init(csv_row_t *r)
 }
 
 /* 버퍼 b 에 칸 하나와 뒤따르는 쉼표(마지막 칸이 아니면)를 붙인다 */
-typedef struct { char buf[1024]; size_t len; } line_t;
+typedef struct { char buf[2048]; size_t len; } line_t;
 
 static void put(line_t *l, const char *s)
 {
@@ -169,6 +169,38 @@ static void put_dbl(line_t *l, double v, int prec)
     put(l, s);
 }
 
+/*
+ * path 에 줄 하나를 덧붙인다. 파일이 비어 있으면 머리글 hdr 부터 쓴다. 머리글이 다른 파일에는 쓰지 않는다 (EBADMSG).
+ * 여러 프로세스가 같은 파일에 써도 줄이 섞이지 않게 쓰는 동안 flock 을 건다.
+ */
+static int append_line(const char *path, const char *hdr, size_t hlen, const char *line, size_t len)
+{
+    int fd = open(path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd < 0) return -1;
+    while (flock(fd, LOCK_EX) < 0) {
+        if (errno != EINTR) { close(fd); return -1; }
+    }
+    int rc = 0;
+    struct stat st;
+    if (fstat(fd, &st) < 0) rc = -1;
+    if (rc == 0 && st.st_size == 0) {
+        if (write(fd, hdr, hlen) != (ssize_t)hlen) rc = -1;
+    } else if (rc == 0) {
+        /* 머리글이 다른 파일(열을 바꾸기 전의 결과 등)에 덧붙이면 열이 어긋난다. 쓰지 않는다 */
+        char got[1024];
+        if (hlen > sizeof got || pread(fd, got, hlen, 0) != (ssize_t)hlen || memcmp(got, hdr, hlen) != 0) {
+            errno = EBADMSG;
+            rc = -1;
+        }
+    }
+    if (rc == 0 && write(fd, line, len) != (ssize_t)len) rc = -1;
+    int e = errno;
+    flock(fd, LOCK_UN);
+    close(fd);
+    errno = e;
+    return rc;
+}
+
 int csv_append(const char *path, const csv_row_t *r)
 {
     line_t l = { .len = 0 };
@@ -187,32 +219,52 @@ int csv_append(const char *path, const csv_row_t *r)
     put_long(&l, r->nvcsw);     put_long(&l, r->nivcsw);
     put_long(&l, r->vmrss_kb);  put_long(&l, r->vmhwm_kb);
     if (l.len > 0) l.buf[l.len - 1] = '\n';      /* 마지막 쉼표를 줄바꿈으로 */
-
-    int fd = open(path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-    if (fd < 0) return -1;
-    while (flock(fd, LOCK_EX) < 0) {
-        if (errno != EINTR) { close(fd); return -1; }
-    }
-
     static const char hdr[] = CSV_HEADER "\n";
-    int rc = 0;
-    struct stat st;
-    if (fstat(fd, &st) < 0) rc = -1;
-    if (rc == 0 && st.st_size == 0) {
-        if (write(fd, hdr, sizeof hdr - 1) != (ssize_t)(sizeof hdr - 1)) rc = -1;
-    } else if (rc == 0) {
-        /* 머리글이 다른 파일(열을 바꾸기 전의 결과 등)에 덧붙이면 열이 어긋난다. 쓰지 않는다 */
-        char got[sizeof hdr - 1];
-        if (pread(fd, got, sizeof got, 0) != (ssize_t)sizeof got || memcmp(got, hdr, sizeof got) != 0) {
-            errno = EBADMSG;
-            rc = -1;
-        }
-    }
-    if (rc == 0 && write(fd, l.buf, l.len) != (ssize_t)l.len) rc = -1;
+    return append_line(path, hdr, sizeof hdr - 1, l.buf, l.len);
+}
 
-    int e = errno;
-    flock(fd, LOCK_UN);
-    close(fd);
-    errno = e;
-    return rc;
+/* ---- 2단계 CSV ---- */
+
+void app_row_init(app_row_t *r)
+{
+    memset(r, 0, sizeof *r);
+    r->run = -1;
+    long *ls[] = { &r->clients, &r->rooms, &r->inflight, &r->workers, &r->tile, &r->draw_pct, &r->rect, &r->snap,
+                   &r->n, &r->errors, &r->draw_n, &r->snap_n, &r->nvcsw, &r->nivcsw, &r->vmrss_kb, &r->vmhwm_kb,
+                   &r->ipc_cap_kb, &r->ipc_rss_kb, &r->ipc_min_chan, &r->checksum_ok };
+    for (size_t i = 0; i < sizeof ls / sizeof *ls; i++) *ls[i] = -1;
+    double *ds[] = { &r->rate_hz, &r->elapsed_s, &r->thr_req_s, &r->thr_mb_s,
+                     &r->lat_mean_us, &r->lat_p50_us, &r->lat_p99_us, &r->lat_max_us,
+                     &r->draw_mean_us, &r->draw_p50_us, &r->draw_p99_us, &r->draw_max_us,
+                     &r->snap_mean_us, &r->snap_p50_us, &r->snap_p99_us, &r->snap_max_us,
+                     &r->req_us, &r->queue_us, &r->lock_us, &r->work_us, &r->resp_us, &r->utime_s, &r->stime_s };
+    for (size_t i = 0; i < sizeof ds / sizeof *ds; i++) *ds[i] = -1;
+}
+
+int app_csv_append(const char *path, const app_row_t *r)
+{
+    line_t l = { .len = 0 };
+    put(&l, "app");         put(&l, r->ipc);        put(&l, r->role);
+    put(&l, r->experiment); put(&l, r->commit);     put_long(&l, r->run);
+    put_long(&l, r->clients); put_long(&l, r->rooms); put_long(&l, r->inflight); put_dbl(&l, r->rate_hz, 1);
+    put_long(&l, r->workers); put(&l, r->lock);     put_long(&l, r->tile);
+    put_long(&l, r->draw_pct); put_long(&l, r->rect); put_long(&l, r->snap);
+    put_long(&l, r->n);       put_long(&l, r->errors); put_dbl(&l, r->elapsed_s, 6);
+    put_dbl(&l, r->thr_req_s, 1); put_dbl(&l, r->thr_mb_s, 3);
+    put_dbl(&l, r->lat_mean_us, 3); put_dbl(&l, r->lat_p50_us, 3); put_dbl(&l, r->lat_p99_us, 3); put_dbl(&l, r->lat_max_us, 3);
+    put_long(&l, r->draw_n);
+    put_dbl(&l, r->draw_mean_us, 3); put_dbl(&l, r->draw_p50_us, 3); put_dbl(&l, r->draw_p99_us, 3); put_dbl(&l, r->draw_max_us, 3);
+    put_long(&l, r->snap_n);
+    put_dbl(&l, r->snap_mean_us, 3); put_dbl(&l, r->snap_p50_us, 3); put_dbl(&l, r->snap_p99_us, 3); put_dbl(&l, r->snap_max_us, 3);
+    put_dbl(&l, r->req_us, 3);  put_dbl(&l, r->queue_us, 3); put_dbl(&l, r->lock_us, 3);
+    put_dbl(&l, r->work_us, 3); put_dbl(&l, r->resp_us, 3);
+    put_dbl(&l, r->utime_s, 6); put_dbl(&l, r->stime_s, 6);
+    put_long(&l, r->nvcsw);     put_long(&l, r->nivcsw);
+    put_long(&l, r->vmrss_kb);  put_long(&l, r->vmhwm_kb);
+    put_long(&l, r->ipc_cap_kb); put_long(&l, r->ipc_rss_kb); put_long(&l, r->ipc_min_chan);
+    put_long(&l, r->checksum_ok);
+    put(&l, r->env);
+    if (l.len > 0) l.buf[l.len - 1] = '\n';
+    static const char hdr[] = APP_CSV_HEADER "\n";
+    return append_line(path, hdr, sizeof hdr - 1, l.buf, l.len);
 }

@@ -96,4 +96,41 @@ void csv_row_init(csv_row_t *r);
  */
 int csv_append(const char *path, const csv_row_t *r);
 
+/* ---- 2단계 CSV ---- */
+
+/* 열 순서의 원본은 docs/measurement/README.md#원자료-형식 의 2단계 파일 설명이다. 줄 하나 = 실행 하나의 클라이언트 전체 또는 서버 */
+#define APP_CSV_HEADER \
+    "stage,ipc,role,experiment,commit,run," \
+    "clients,rooms,inflight,rate_hz,workers,lock,tile,draw_pct,rect,snap," \
+    "n,errors,elapsed_s,thr_req_s,thr_mb_s," \
+    "lat_mean_us,lat_p50_us,lat_p99_us,lat_max_us," \
+    "draw_n,draw_mean_us,draw_p50_us,draw_p99_us,draw_max_us," \
+    "snap_n,snap_mean_us,snap_p50_us,snap_p99_us,snap_max_us," \
+    "req_us,queue_us,lock_us,work_us,resp_us," \
+    "utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb," \
+    "ipc_cap_kb,ipc_rss_kb,ipc_min_chan,checksum_ok,env"
+
+/* 값이 음수이거나 문자열이 NULL 이면 빈 칸. app_row_init 으로 모두 빈 칸으로 만든 뒤 채운다 */
+typedef struct {
+    const char *ipc, *role, *experiment, *commit, *lock, *env;
+    long   run;
+    long   clients, rooms, inflight;
+    double rate_hz;
+    long   workers, tile, draw_pct, rect, snap;
+    long   n, errors;
+    double elapsed_s, thr_req_s, thr_mb_s;
+    double lat_mean_us, lat_p50_us, lat_p99_us, lat_max_us;
+    long   draw_n;
+    double draw_mean_us, draw_p50_us, draw_p99_us, draw_max_us;
+    long   snap_n;
+    double snap_mean_us, snap_p50_us, snap_p99_us, snap_max_us;
+    double req_us, queue_us, lock_us, work_us, resp_us;
+    double utime_s, stime_s;
+    long   nvcsw, nivcsw, vmrss_kb, vmhwm_kb;
+    long   ipc_cap_kb, ipc_rss_kb, ipc_min_chan, checksum_ok;
+} app_row_t;
+
+void app_row_init(app_row_t *r);
+int  app_csv_append(const char *path, const app_row_t *r);    /* csv_append 와 같은 규칙 (flock, 머리글 확인) */
+
 #endif /* UTIL_H */
