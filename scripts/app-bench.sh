@@ -79,7 +79,8 @@ run_one() {
     rm -f "$tmp/expect" "$tmp/man"
     env $senv "bin/server_$ipc" $sopts -p - -O "$OUT/$exp.csv" -e "$exp" -R "$rep" -X "$tmp/expect" > "$tmp/srv.out" 2> "$tmp/srv.err" &
     local sp=$! ok=0
-    for _ in $(seq 200); do grep -q '시작' "$tmp/srv.err" 2>/dev/null && { ok=1; break; }; kill -0 $sp 2>/dev/null || break; sleep 0.05; done
+    # 직전 실행의 srv.err 가 남아 있을 수 있다. 이 서버의 pid 가 찍힌 '시작' 줄만 인정한다 (env 는 exec 하므로 pid 가 같다)
+    for _ in $(seq 200); do grep -q "시작 (pid $sp," "$tmp/srv.err" 2>/dev/null && { ok=1; break; }; kill -0 $sp 2>/dev/null || break; sleep 0.05; done
     runs=$((runs + 1))
     if [ $ok -eq 0 ]; then
         echo "  실패: 서버가 뜨지 않음 $(head -c 200 "$tmp/srv.err")"; kill -9 $sp 2>/dev/null; wait $sp 2>/dev/null

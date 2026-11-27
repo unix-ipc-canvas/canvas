@@ -109,7 +109,9 @@ start_server() {
     local ipc=$1; shift
     "bin/server_$ipc" -p "$work/c_$ipc.pgm" "$@" > "$work/srv.out" 2> "$work/srv.err" &
     SP=$!
-    for _ in $(seq 100); do grep -q '시작' "$work/srv.err" 2>/dev/null && return 0; kill -0 "$SP" 2>/dev/null || return 1; sleep 0.05; done
+    # srv.err 를 비우는 리다이렉션은 자식이 한다. 자식이 늦게 돌면 직전 서버의 '시작' 줄이 아직 남아 있으므로
+    # 이 서버의 pid 가 찍힌 줄만 인정한다 (CI 에서 T-22 가 이 경쟁으로 실패했다)
+    for _ in $(seq 100); do grep -q "시작 (pid $SP," "$work/srv.err" 2>/dev/null && return 0; kill -0 "$SP" 2>/dev/null || return 1; sleep 0.05; done
     return 1
 }
 # stop_server : SIGINT 뒤 10초 안에 끝나야 한다. 종료 코드를 돌려준다
