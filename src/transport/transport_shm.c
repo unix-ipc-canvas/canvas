@@ -31,8 +31,12 @@
  *   대가로 메시지 하나에 semop 시스템 콜이 보내는 쪽 2번, 받는 쪽 2번 든다. 작은 메시지에서는 이 비용이 드러난다.
  * DECISION: payload 는 링에 한 번, 링에서 받는 쪽 버퍼로 한 번 복사한다. transport.h 가 받는 쪽 버퍼에 통째로
  *   담아 주는 약속이라 복사를 없앨 수는 없다. 그 대신 메시지 전체가 링에 들어가므로 큰 메시지도 조각내지 않는다.
- * DECISION: 링 크기는 가장 큰 메시지(머리 + MAX_PAYLOAD)를 요청 링에 4개, 응답 링에 2개 담을 수 있게 잡는다.
- *   환경 변수 OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS 로 서버를 띄울 때 바꿀 수 있다 (메모리 실험용).
+ * DECISION: 링 크기는 가장 큰 메시지를 요청 링에 4개, 응답 링에 2개 담을 수 있게 잡는다.
+ *   가장 큰 메시지와 응답 링 수(클라이언트 수)는 서버가 tp_set_limits 로 알려 준다. 부르지 않으면 1단계 값
+ *   (머리 + MAX_PAYLOAD, 클라이언트 16개)이다. 2단계 응용은 응답 최대 65,592B 라 응답 링이 클라이언트당
+ *   4KB 칸 34개(136KB)이고, 요청이 40B 이하라 요청 링은 64B 칸으로 클라이언트 수만큼 잡는다 (11/27 재수행).
+ *   환경 변수 OSP_SHM_CHUNK, OSP_SHM_REQ_CHUNK, OSP_SHM_REQ_CHUNKS, OSP_SHM_RESP_CHUNKS 로 서버를 띄울 때
+ *   바꿀 수 있다 (메모리 실험용).
  */
 #define _GNU_SOURCE             /* semtimedop, F_OFD_SETLK, F_OFD_GETLK */
 #include <errno.h>
@@ -77,10 +81,12 @@ enum { S_MUTEX = 0, S_FREE = 1, S_MSGS = 2, S_PER_RING = 3 };    /* 링 하나�
 /* 요청 영역의 맨 앞. 64B */
 typedef struct {
     uint32_t ready;
-    uint32_t chunk;
+    uint32_t chunk;          /* 응답 링의 칸 크기 */
     uint32_t req_chunks;
     uint32_t resp_chunks;
-    uint32_t pad[12];
+    uint32_t req_chunk;      /* 요청 링의 칸 크기 */
+    uint32_t nclients;       /* 응답 링 수 */
+    uint32_t pad[10];
 } seg_hdr_t;
 
 /* 링 머리. 공유 메모리 안에 있다. 64B */
@@ -261,8 +267,26 @@ static ssize_t ring_recv(const ring_t *r, msg_hdr_t *hdr, void *payload, size_t 
 /* ---- 크기 ---- */
 
 typedef struct {
-    uint32_t chunk, req_chunks, resp_chunks;
+    uint32_t chunk, req_chunks, resp_chunks, req_chunk, nclients;
 } geom_t;
+
+/* tp_set_limits 로 받은 값. 부르지 않으면 1단계 값 */
+#define DEF_CLIENTS 16u
+static uint32_t lim_clients = DEF_CLIENTS;
+static size_t   lim_req = MSG_MAX, lim_resp = MSG_MAX;
+
+int tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp)
+{
+    if (max_clients < 1 || max_clients > MAX_CLIENTS || max_req < sizeof(msg_hdr_t) || max_resp < sizeof(msg_hdr_t) ||
+        max_req > MSG_MAX || max_resp > MSG_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    lim_clients = max_clients;
+    lim_req = max_req;
+    lim_resp = max_resp;
+    return 0;
+}
 
 /* 환경 변수 값. 없으면 def, 숫자가 아니면 0 */
 static uint32_t env_u32(const char *name, uint32_t def)
@@ -278,12 +302,18 @@ static uint32_t env_u32(const char *name, uint32_t def)
 
 static int geom_from_env(geom_t *g)
 {
+    g->nclients = lim_clients;
     g->chunk = env_u32("OSP_SHM_CHUNK", DEF_CHUNK);
-    if (g->chunk < 64 || g->chunk % 64) { errno = EINVAL; return -1; }     /* 머리가 첫 칸에 들어가고 8B 정렬 */
-    uint32_t per_msg = chunks_for(g->chunk, MSG_MAX);
-    g->req_chunks = env_u32("OSP_SHM_REQ_CHUNKS", DEF_REQ_MSGS * per_msg);
-    g->resp_chunks = env_u32("OSP_SHM_RESP_CHUNKS", DEF_RESP_MSGS * per_msg);
-    if (g->req_chunks < per_msg || g->resp_chunks < per_msg ||
+    g->req_chunk = env_u32("OSP_SHM_REQ_CHUNK", lim_req <= 64 ? 64 : g->chunk);
+    /* 머리(24B)가 첫 칸에 들어가고 8B 정렬 */
+    if (g->chunk < 64 || g->chunk % 64 || g->req_chunk < 64 || g->req_chunk % 64) { errno = EINVAL; return -1; }
+    uint32_t per_req = chunks_for(g->req_chunk, lim_req);
+    uint32_t per_resp = chunks_for(g->chunk, lim_resp);
+    uint32_t def_req = DEF_REQ_MSGS * per_req;
+    if (def_req < g->nclients) def_req = g->nclients;      /* 클라이언트마다 요청 하나는 링에서 기다릴 수 있게 */
+    g->req_chunks = env_u32("OSP_SHM_REQ_CHUNKS", def_req);
+    g->resp_chunks = env_u32("OSP_SHM_RESP_CHUNKS", DEF_RESP_MSGS * per_resp);
+    if (g->req_chunks < per_req || g->resp_chunks < per_resp ||
         g->req_chunks > SEM_MAX_VALUE || g->resp_chunks > SEM_MAX_VALUE) {
         errno = EINVAL;
         return -1;
@@ -291,9 +321,9 @@ static int geom_from_env(geom_t *g)
     return 0;
 }
 
-static size_t req_seg_size(const geom_t *g)  { return sizeof(seg_hdr_t) + sizeof(ring_hdr_t) + (size_t)g->req_chunks * g->chunk; }
+static size_t req_seg_size(const geom_t *g)  { return sizeof(seg_hdr_t) + sizeof(ring_hdr_t) + (size_t)g->req_chunks * g->req_chunk; }
 static size_t resp_stride(const geom_t *g)   { return sizeof(ring_hdr_t) + (size_t)g->resp_chunks * g->chunk; }
-static size_t resp_seg_size(const geom_t *g) { return resp_stride(g) * MAX_CLIENTS; }
+static size_t resp_seg_size(const geom_t *g) { return resp_stride(g) * g->nclients; }
 
 const char *tp_name(void) { return "shm"; }
 
@@ -310,7 +340,9 @@ static int srv_req_shm = -1, srv_resp_shm = -1;
 static int srv_req_sem = -1, srv_resp_sem = -1;
 static char *srv_req_base, *srv_resp_base;
 static ring_t srv_req;                       /* 받는 쪽 */
-static ring_t srv_resp[MAX_CLIENTS];         /* 보내는 쪽 */
+static ring_t srv_resp[MAX_CLIENTS];         /* 보내는 쪽. 앞의 srv_nclients 개만 쓴다 */
+static uint32_t srv_nclients;
+static size_t srv_req_size, srv_resp_size;   /* 세그먼트 크기 (tp_server_info) */
 static atomic_bool srv_opened;
 static atomic_bool srv_stopping;             /* tp_server_wake 이후 */
 static atomic_bool srv_closing;              /* tp_server_close 이후. 기다리던 송신이 그만둔다 */
@@ -430,22 +462,27 @@ int tp_server_open(void)
 
     srv_req_sem = make_sem(KEY_REQ_SEM, 1, g.req_chunks);
     if (srv_req_sem < 0) goto fail;
-    srv_resp_sem = make_sem(KEY_RESP_SEM, MAX_CLIENTS, g.resp_chunks);
+    srv_resp_sem = make_sem(KEY_RESP_SEM, g.nclients, g.resp_chunks);
     if (srv_resp_sem < 0) goto fail;
     srv_req_base = make_shm(KEY_REQ_SHM, req_seg_size(&g), &srv_req_shm);
     if (!srv_req_base) goto fail;
     srv_resp_base = make_shm(KEY_RESP_SHM, resp_seg_size(&g), &srv_resp_shm);
     if (!srv_resp_base) goto fail;
 
-    ring_bind(&srv_req, srv_req_base + sizeof(seg_hdr_t), g.chunk, g.req_chunks, srv_req_sem, 0);
-    for (uint32_t i = 0; i < MAX_CLIENTS; i++)
+    ring_bind(&srv_req, srv_req_base + sizeof(seg_hdr_t), g.req_chunk, g.req_chunks, srv_req_sem, 0);
+    for (uint32_t i = 0; i < g.nclients; i++)
         ring_bind(&srv_resp[i], srv_resp_base + (size_t)i * resp_stride(&g), g.chunk, g.resp_chunks,
                   srv_resp_sem, (unsigned short)(i * S_PER_RING));
+    srv_nclients = g.nclients;
+    srv_req_size = req_seg_size(&g);
+    srv_resp_size = resp_seg_size(&g);
 
     seg_hdr_t *sh = (seg_hdr_t *)srv_req_base;
     sh->chunk = g.chunk;
     sh->req_chunks = g.req_chunks;
     sh->resp_chunks = g.resp_chunks;
+    sh->req_chunk = g.req_chunk;
+    sh->nclients = g.nclients;
     atomic_store(&srv_stopping, false);
     atomic_store(&srv_closing, false);
     atomic_store(&srv_users, 0);
@@ -490,7 +527,7 @@ out:
 int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
 {
     uint32_t id = hdr->client_id;
-    if (id >= MAX_CLIENTS) { errno = EINVAL; return -1; }
+    if (id >= srv_nclients) { errno = EINVAL; return -1; }
     if (!srv_enter()) { errno = EPIPE; return -1; }
 
     waiter_t w = { srv_lock_fd, LOCK_CLIENT(id), &srv_closing };
@@ -531,6 +568,40 @@ void tp_server_close(void)
         nanosleep(&ts, NULL);
     }
     server_release();
+}
+
+/* /proc/sysvipc/shm 에서 shmid 의 rss(바이트)를 읽는다. 없으면 0 */
+static uint64_t shm_rss(int shmid)
+{
+    FILE *f = fopen("/proc/sysvipc/shm", "r");
+    if (!f) return 0;
+    char line[512];
+    uint64_t rss = 0;
+    if (fgets(line, sizeof line, f)) {                   /* 머리글 */
+        while (fgets(line, sizeof line, f)) {
+            long key; int id;
+            unsigned long long v[14];
+            if (sscanf(line, "%ld %d %*o %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+                       &key, &id, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7], &v[8], &v[9], &v[10],
+                       &v[11]) == 14 && id == shmid) {
+                rss = v[11];                             /* size cpid lpid nattch uid gid cuid cgid atime dtime ctime rss */
+                break;
+            }
+        }
+    }
+    fclose(f);
+    return rss;
+}
+
+void tp_server_info(tp_info_t *out)
+{
+    memset(out, 0, sizeof *out);
+    if (!srv_enter()) return;
+    out->cap_bytes = srv_req_size + srv_resp_size;
+    out->rss_bytes = shm_rss(srv_req_shm) + shm_rss(srv_resp_shm);
+    out->nchan = srv_nclients;
+    out->min_chan = srv_nclients ? (uint32_t)ring_bytes(&srv_resp[0]) : 0;
+    srv_leave();
 }
 
 /* ================================================================
@@ -624,7 +695,7 @@ static int attach(key_t key, int *idp, char **basep)
 int tp_client_open(uint32_t client_id)
 {
     char lp[PATH_LEN];
-    if (client_id >= MAX_CLIENTS) { errno = EINVAL; return -1; }
+    if (client_id >= MAX_CLIENTS) { errno = EINVAL; return -1; }     /* 서버가 정한 수와는 연결한 뒤에 비교한다 */
     lock_path(lp);
 
     cli_lock_fd = open(lp, O_RDWR | O_CLOEXEC);
@@ -645,7 +716,8 @@ int tp_client_open(uint32_t client_id)
     }
     seg_hdr_t *sh = (seg_hdr_t *)cli_req_base;
     if (__atomic_load_n(&sh->ready, __ATOMIC_ACQUIRE) != SHM_READY) { errno = ECONNREFUSED; goto fail; }  /* 서버가 아직 만드는 중 */
-    geom_t g = { sh->chunk, sh->req_chunks, sh->resp_chunks };
+    geom_t g = { sh->chunk, sh->req_chunks, sh->resp_chunks, sh->req_chunk, sh->nclients };
+    if (client_id >= g.nclients) { errno = EINVAL; goto fail; }
 
     if (attach(KEY_RESP_SHM, &cli_resp_shm, &cli_resp_base) < 0) {
         if (errno == ENOENT || errno == EIDRM || errno == EINVAL) errno = ECONNREFUSED;
@@ -661,7 +733,7 @@ int tp_client_open(uint32_t client_id)
         goto fail;
     }
 
-    ring_bind(&cli_req, cli_req_base + sizeof(seg_hdr_t), g.chunk, g.req_chunks, cli_req_sem, 0);
+    ring_bind(&cli_req, cli_req_base + sizeof(seg_hdr_t), g.req_chunk, g.req_chunks, cli_req_sem, 0);
     ring_bind(&cli_resp, cli_resp_base + (size_t)client_id * resp_stride(&g), g.chunk, g.resp_chunks,
               cli_resp_sem, (unsigned short)(client_id * S_PER_RING));
 

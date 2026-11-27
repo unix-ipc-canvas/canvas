@@ -13,6 +13,7 @@
  *   - 요청이 PIPE_BUF 를 넘으면(1단계 벤치마크의 큰 메시지) 잠금 파일에 fcntl 쓰기 잠금을 걸고 보낸다.
  *   - 응답은 클라이언트별 mutex 를 잡고 보낸다. 큰 응답이 여러 번의 write 로 나뉘어도 섞이지 않는다.
  */
+#define _GNU_SOURCE             /* F_GETPIPE_SZ */
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -28,6 +29,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 #include <limits.h>
+#include <sys/resource.h>
 
 #include "transport.h"
 
@@ -233,6 +235,32 @@ static int srv_resp_fd[MAX_CLIENTS];             /* 응답 FIFO 쓰기 끝. 처�
 static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static int srv_opened;
+static uint32_t lim_clients = 16;                /* tp_set_limits. 부르지 않으면 1단계 값 */
+
+/*
+ * 클라이언트 수만 쓴다. 서버는 응답 FIFO 를 클라이언트마다 하나씩 열어 두므로, 열린 파일 한도(터미널 기본 soft 1024)가
+ * 클라이언트 수보다 작으면 1000개쯤에서 EMFILE 이 난다. tp_server_open 이 soft 한도를 hard 한도 안에서 올린다.
+ * 메시지 크기는 FIFO 가 바이트 스트림이라 버퍼 크기와 관계없다.
+ */
+int tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp)
+{
+    if (max_clients < 1 || max_clients > MAX_CLIENTS || max_req < sizeof(msg_hdr_t) || max_resp < sizeof(msg_hdr_t)) {
+        errno = EINVAL;
+        return -1;
+    }
+    lim_clients = max_clients;
+    return 0;
+}
+
+/* 열린 파일 한도를 클라이언트 수 + 여유 64개 이상으로 올린다. hard 한도가 모자라면 그대로 두고 0 (열 때 EMFILE 로 알게 된다) */
+static void raise_nofile(void)
+{
+    struct rlimit rl;
+    rlim_t need = (rlim_t)lim_clients + 64;
+    if (getrlimit(RLIMIT_NOFILE, &rl) < 0 || rl.rlim_cur >= need) return;
+    rl.rlim_cur = rl.rlim_max == RLIM_INFINITY || rl.rlim_max >= need ? need : rl.rlim_max;
+    setrlimit(RLIMIT_NOFILE, &rl);
+}
 
 int tp_server_open(void)
 {
@@ -241,6 +269,7 @@ int tp_server_open(void)
     lock_path(lp);
 
     ignore_sigpipe();
+    raise_nofile();
     if (make_fifo(rp) < 0) return -1;           /* 서버가 이미 떠 있으면 EADDRINUSE */
 
     /*
@@ -406,8 +435,14 @@ void tp_server_close(void)
     unlink(rp);
     unlink(lp);
 
+    /*
+     * 정상 종료에서는 송신하던 워커가 모두 빠져나온 뒤라 락이 늘 비어 있다(transport.h 의 약속).
+     * 서버가 두 번째 신호로 바로 끝날 때는 멈춘 클라이언트에게 write 하며 락을 쥔 워커가 남아 있을 수 있다.
+     * 그 락을 기다리면 닫기도 함께 멈추므로, 잡히지 않는 번호는 건너뛴다. 곧 _exit 하므로 그 fd 는 커널이 닫는다.
+     * (처음 2단계의 eb520c9 와 같은 수정)
+     */
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
-        pthread_mutex_lock(&srv_resp_mtx[i]);
+        if (pthread_mutex_trylock(&srv_resp_mtx[i]) != 0) continue;
         drop_resp_locked(i);             /* 클라이언트의 수신은 EOF 를 받고 끝난다 */
         pthread_mutex_unlock(&srv_resp_mtx[i]);
         pthread_mutex_destroy(&srv_resp_mtx[i]);
@@ -416,6 +451,24 @@ void tp_server_close(void)
     close(srv_wake_fd); srv_wake_fd = -1;
     close(srv_lock_fd); srv_lock_fd = -1;
     srv_opened = 0;
+}
+
+/* 요청 FIFO 와 연 응답 FIFO 들의 버퍼 크기(F_GETPIPE_SZ). 응답 FIFO 는 그 번호의 송신 락을 잡고 읽는다 */
+void tp_server_info(tp_info_t *out)
+{
+    memset(out, 0, sizeof *out);
+    if (!srv_opened) return;
+    int sz = fcntl(srv_req_fd, F_GETPIPE_SZ);
+    if (sz > 0) out->cap_bytes += (uint64_t)sz;
+    for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
+        if (pthread_mutex_trylock(&srv_resp_mtx[i]) != 0) continue;     /* 보내는 중이면 건너뛴다 */
+        if (srv_resp_fd[i] >= 0 && (sz = fcntl(srv_resp_fd[i], F_GETPIPE_SZ)) > 0) {
+            out->cap_bytes += (uint64_t)sz;
+            out->nchan++;
+            if (out->min_chan == 0 || (uint32_t)sz < out->min_chan) out->min_chan = (uint32_t)sz;
+        }
+        pthread_mutex_unlock(&srv_resp_mtx[i]);
+    }
 }
 
 /* ================================================================

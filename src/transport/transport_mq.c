@@ -286,9 +286,13 @@ static watch_t srv_watch;
 
 /*
  * 여러 조각으로 온 요청을 클라이언트별로 붙이는 자리.
- * DECISION: 클라이언트마다 MAX_PAYLOAD 를 한 번에 잡아 둔다 (16MB). 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
- *   쓰지 않은 페이지는 실제 메모리를 차지하지 않는다. 응용의 요청은 모두 조각 하나라서 이 자리를 건드리지 않는다.
+ * DECISION: 클라이언트마다 요청 최대 크기를 한 번에 잡아 둔다. 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
+ *   쓰지 않은 페이지는 실제 메모리를 차지하지 않는다. 1단계 벤치(tp_set_limits 를 부르지 않음)는 클라이언트 16개 ×
+ *   MAX_PAYLOAD = 16MB 다. 2단계 응용은 요청이 모두 조각 하나라 이 자리를 잡지 않는다(11/27 재수행, 클라이언트 1024개).
  */
+static uint32_t lim_clients = 16;                /* tp_set_limits. 부르지 않으면 1단계 값 */
+static size_t   lim_req = sizeof(msg_hdr_t) + MAX_PAYLOAD;
+static size_t   srv_asm_stride;                  /* 클라이언트 하나의 붙이는 자리. 0 이면 여러 조각 요청을 받지 않는다 */
 static char *srv_asm_buf;
 static struct {
     msg_hdr_t hdr;
@@ -297,6 +301,18 @@ static struct {
 } srv_asm[MAX_CLIENTS];
 
 static frag_t *srv_sbuf_of(uint32_t id) { return (frag_t *)(srv_sbuf + (size_t)id * srv_sbuf_stride); }
+
+int tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp)
+{
+    if (max_clients < 1 || max_clients > MAX_CLIENTS || max_req < sizeof(msg_hdr_t) || max_resp < sizeof(msg_hdr_t) ||
+        max_req > sizeof(msg_hdr_t) + MAX_PAYLOAD) {
+        errno = EINVAL;
+        return -1;
+    }
+    lim_clients = max_clients;
+    lim_req = max_req;
+    return 0;
+}
 
 /*
  * 잠금 파일을 열고 서버 자리를 잡는다. 다른 서버가 살아 있으면 -1, errno = EADDRINUSE.
@@ -399,8 +415,10 @@ int tp_server_open(void)
     srv_sbuf_stride = (sizeof(long) + srv_chunk + 15) & ~(size_t)15;
     srv_rbuf = frag_alloc(srv_limit);
     srv_sbuf = malloc(srv_sbuf_stride * MAX_CLIENTS);
-    srv_asm_buf = malloc((size_t)MAX_CLIENTS * MAX_PAYLOAD);
-    if (!srv_rbuf || !srv_sbuf || !srv_asm_buf) { errno = ENOMEM; goto fail; }
+    /* 요청이 조각 하나(FRAG_HDR + 머리 + payload <= srv_limit)에 들어가면 붙이는 자리가 필요 없다 */
+    srv_asm_stride = FRAG_HDR + lim_req <= srv_limit ? 0 : lim_req - sizeof(msg_hdr_t);
+    srv_asm_buf = srv_asm_stride ? malloc((size_t)lim_clients * srv_asm_stride) : NULL;
+    if (!srv_rbuf || !srv_sbuf || (srv_asm_stride && !srv_asm_buf)) { errno = ENOMEM; goto fail; }
 
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
         pthread_mutex_init(&srv_resp_mtx[i], NULL);
@@ -460,7 +478,8 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
             dlen -= sizeof h;
             if (dlen > h.payload_len) continue;
 
-            if (h.payload_len > cap || h.payload_len > MAX_PAYLOAD) {
+            if (h.payload_len > cap || h.payload_len > MAX_PAYLOAD ||
+                (dlen < h.payload_len && (id >= lim_clients || h.payload_len > srv_asm_stride))) {
                 /* 이어지는 조각은 붙이는 중이 아니므로 아래에서 버려진다 */
                 *hdr = h;
                 errno = EMSGSIZE;
@@ -474,14 +493,14 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
             srv_asm[id].hdr = h;
             srv_asm[id].got = dlen;
             srv_asm[id].active = true;
-            memcpy(srv_asm_buf + (size_t)id * MAX_PAYLOAD, data, dlen);
+            memcpy(srv_asm_buf + (size_t)id * srv_asm_stride, data, dlen);
         } else if (srv_rbuf->kind == FRAG_CONT) {
             if (!srv_asm[id].active) continue;       /* 첫 조각을 못 받은 조각은 버린다 */
 
             size_t total = srv_asm[id].hdr.payload_len;
             if (dlen > total - srv_asm[id].got) { srv_asm[id].active = false; continue; }
 
-            char *buf = srv_asm_buf + (size_t)id * MAX_PAYLOAD;
+            char *buf = srv_asm_buf + (size_t)id * srv_asm_stride;
             memcpy(buf + srv_asm[id].got, data, dlen);
             srv_asm[id].got += dlen;
             if (srv_asm[id].got < total) continue;
@@ -566,6 +585,20 @@ void tp_server_close(void)
     srv_req_q = -1;
     srv_resp_q = -1;
     server_release();
+}
+
+/* 요청·응답 큐의 용량(msg_qbytes). 응답 채널은 큐 하나를 모든 클라이언트가 나눠 쓴다 */
+void tp_server_info(tp_info_t *out)
+{
+    memset(out, 0, sizeof *out);
+    if (!atomic_load(&srv_opened)) return;
+    struct msqid_ds ds;
+    if (msgctl(srv_req_q, IPC_STAT, &ds) == 0) out->cap_bytes += ds.msg_qbytes;
+    if (msgctl(srv_resp_q, IPC_STAT, &ds) == 0) {
+        out->cap_bytes += ds.msg_qbytes;
+        out->nchan = 1;
+        out->min_chan = (uint32_t)ds.msg_qbytes;
+    }
 }
 
 /* ================================================================

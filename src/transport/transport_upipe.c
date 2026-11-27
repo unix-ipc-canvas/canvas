@@ -202,6 +202,16 @@ static ssize_t recv_msg(int fd, msg_hdr_t *hdr, void *payload, size_t cap)
 
 const char *tp_name(void) { return "upipe"; }
 
+/* 1단계 벤치마크 전용이라 클라이언트 수만 확인하고 버퍼는 커널 기본값 그대로다 */
+int tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp)
+{
+    (void)max_req; (void)max_resp;
+    if (max_clients < 1 || max_clients > MAX_CLIENTS) { errno = EINVAL; return -1; }
+    return 0;
+}
+
+void tp_server_info(tp_info_t *out) { memset(out, 0, sizeof *out); }
+
 /* ================================================================
  * fork 전후 (공통 조상)
  * ================================================================ */

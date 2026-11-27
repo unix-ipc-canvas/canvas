@@ -805,6 +805,19 @@ static int run_driver(const cfg_t *cfg)
     if (!ch || !ready) { fprintf(stderr, "bench: 메모리 부족\n"); return 1; }
     fflush(NULL);
 
+    /*
+     * 서버 자식이 물려받을 전송 계층 한도. 1단계 메시지 크기(머리 + MAX_PAYLOAD)는 그대로이고 클라이언트 수만 알린다.
+     * 1단계 측정 때(2df6b9c)는 이 호출이 없었고 shm 응답 링이 늘 16개였다. 링 수만 다르고 링 크기와 송수신은 같다.
+     */
+    if (tp_set_limits(cfg->clients < 16 ? 16 : cfg->clients, sizeof(msg_hdr_t) + MAX_PAYLOAD,
+                      sizeof(msg_hdr_t) + MAX_PAYLOAD) < 0) {
+        fprintf(stderr, "bench: tp_set_limits: 클라이언트 수 %u\n", cfg->clients);
+        remove_dir(dir, cfg->clients);
+        free(ch);
+        free(ready);
+        return 1;
+    }
+
     /* 익명 pipe 버전은 여기서 채널을 만들어 자식에게 물려준다. 다른 버전은 아무것도 하지 않는다 */
     if (tp_prefork() < 0) {
         char eb[128];
