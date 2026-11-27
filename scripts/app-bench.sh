@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # 2단계 측정. 실험과 조건의 원본은 docs/measurement/README.md#2단계-실험 이다.
 #
-#   scripts/app-bench.sh                                   전체 (EXPS="type thr scale lock target"), 반복 REPS=30
+#   scripts/app-bench.sh                                   전체 (아래 EXPS 기본값), 반복 REPS=30
 #   REPS=2 EXPS="scale" OUT=/tmp/x scripts/app-bench.sh     일부만, 다른 곳에
-#   EXPS="imp-mq" ... 원인 확인·설계 개선 실험은 COND_<실험> 환경 변수로 조건을 준다 (아래 conds_for)
+#   EXPS="x" COND_x="-K 8|64|-f 1|2|" ...                   목록에 없는 실험은 COND_<실험> 환경 변수로 조건을 준다
+#
+# 기본 실험 (조건은 conds_for, 재는 IPC 는 ipcs_for)
+#   type thr scale lock target    처음 설계 (docs/measurement/README.md#2단계-실험)
+#   cause-procs                   원인 확인: 띄운 요청 수(N × f = 1024)는 같고 클라이언트 프로세스 수만 다르다
+#   imp-mq-q                      원인 확인·개선(mq): 응답 큐 수 Q 만 1·2·4·8 로 바꾼다 (클라이언트 1024)
+#   imp-mq-req                    원인 확인·개선(mq): 요청 큐 용량(16,384 / 8,192B)과 입장 제한만 바꾼다
+#   imp-scale                     개선 전후: mq 응답 큐 8개 + 입장 제한, shm 클라이언트별 요청 링, 클라이언트 1~1024
+#   imp-target                    개선 뒤 목표 부하(N-2)
+#   mem-shm                       메모리(N-5): shm 응답 링 칸 수 34(응답 2개) / 17(응답 1개), 동시 요청 1·4
 #
 # 실행 하나: 서버를 새로 띄우고 → 실행기가 클라이언트 N개를 워밍업시킨 뒤 함께 시작 → 끝나면 검증기로 정답을 만들어
 # 두고 서버를 SIGINT 로 끝낸다. 서버는 정답과 그림판 체크섬을 비교해 CSV 서버 줄의 checksum_ok 에 남긴다.
@@ -11,7 +20,7 @@
 set -u
 cd "$(dirname "$0")/.."
 REPS=${REPS:-30}
-EXPS=${EXPS:-"type thr scale lock target"}
+EXPS=${EXPS:-"type thr scale lock target cause-procs imp-mq-q imp-mq-req imp-scale imp-target mem-shm"}
 IPCS=${IPCS:-"pipe mq shm"}
 OUT=${OUT:-results/app}
 TEAM_NO=$(sed -n 's/^TEAM_NO ?= *//p' Makefile)
@@ -34,7 +43,30 @@ conds_for() {
     scale)  for m in 90 100; do for n in 1 4 16 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m $m -f 1|$d|"; done; done ;;
     lock)   for l in rw room; do for n in 16 64 256; do echo "-K 1 -l $l|$n|-f 1|2|"; done; done ;;
     target) echo "-K 8|1024|-H 67 -f 4|3|" ;;
+    cause-procs) echo "-K 8|64|-m 90 -f 16|3|"; echo "-K 8|256|-m 90 -f 4|3|"; echo "-K 8|1024|-m 90 -f 1|3|" ;;
+    imp-mq-q)    for q in 1 2 4 8; do echo "-K 8|1024|-m 90 -f 1|3|OSP_MQ_RESP_Q=$q"; done ;;
+    imp-mq-req)  echo "-K 8|256|-m 90 -f 1|3|OSP_MQ_RESP_Q=8"
+                 echo "-K 8|256|-m 90 -f 1|3|OSP_MQ_RESP_Q=8 OSP_MQ_REQ_QBYTES=8192"
+                 echo "-K 8|256|-m 90 -f 1|3|OSP_MQ_RESP_Q=8 OSP_MQ_REQ_QBYTES=8192 OSP_MQ_ADMIT=1"
+                 echo "-K 8|1024|-m 90 -f 1|3|OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1" ;;
+    imp-scale)   echo "-K 8|1024|-m 90 -f 1|3|"
+                 for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done ;;
+    imp-target)  echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
+    mem-shm)     for f in 1 4; do for c in 34 17; do echo "-K 8|1024|-m 90 -f $f|3|OSP_SHM_REQ=per OSP_SHM_RESP_CHUNKS=$c"; done; done ;;
     *)      v="COND_${1//-/_}"; [ -n "${!v:-}" ] && printf '%s\n' "${!v}" | tr ';' '\n' ;;
+    esac
+}
+
+# 개선한 설계 (서버에만 준다. 각 서버는 자기 IPC 의 변수만 읽는다)
+IMP_ENV="OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 OSP_SHM_REQ=per"
+
+# 실험마다 재는 IPC. 개선·메모리 실험은 그 개선이 있는 IPC 만 (T-42 도 이렇게 센다)
+ipcs_for() {
+    case $1 in
+    imp-mq-q|imp-mq-req)  echo "mq" ;;
+    imp-scale|imp-target) echo "mq shm" ;;
+    mem-shm)              echo "shm" ;;
+    *)                    echo "$IPCS" ;;
     esac
 }
 
@@ -110,10 +142,11 @@ echo "측정 시작: 커밋 $BENCH_COMMIT, 실험 [$EXPS], 반복 $REPS, 결과 
 for exp in $EXPS; do
     mapfile -t CONDS < <(conds_for "$exp")
     [ ${#CONDS[@]} -gt 0 ] || { echo "실험 $exp 의 조건이 없다" >&2; continue; }
-    echo "== $exp: 조건 ${#CONDS[@]}개 × IPC 3개 × 반복 $REPS"
+    exp_ipcs=$(ipcs_for "$exp")
+    echo "== $exp: 조건 ${#CONDS[@]}개 × IPC [$exp_ipcs] × 반복 $REPS"
     for ((rep = 1; rep <= REPS; rep++)); do
         # 반복마다 IPC 순서를 돌린다 (pipe mq shm → mq shm pipe → shm pipe mq)
-        read -r -a order <<< "$IPCS"
+        read -r -a order <<< "$exp_ipcs"
         k=$(( (rep - 1) % ${#order[@]} )); order=("${order[@]:k}" "${order[@]:0:k}")
         for c in "${CONDS[@]}"; do
             IFS='|' read -r sopts n copts dur senv <<< "$c"
