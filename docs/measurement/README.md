@@ -202,6 +202,20 @@ utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb
 - 해당 없는 칸은 비운다. 1단계에는 `workers`부터 `snap`까지와 구간별 시간이 없다.
 - 클라이언트 프로세스 여럿이 같은 파일에 써도 줄이 섞이지 않게 `csv_append`(`util.c`)가 파일 잠금을 걸고 쓴다. 2단계 `client.c`도 이 함수를 쓴다. 머리글이 다른 파일(열을 바꾸기 전에 잰 결과)에는 덧붙이지 않고 실패한다.
 - 1단계 파일: `results/bench_latency.csv`, `results/bench_throughput.csv`, `results/bench_clock.csv`, 측정 환경 `results/bench_env.txt`. 처음 측정(반복 5번, 성능 예측의 근거)은 `results/` 바로 아래, 반복 20번으로 다시 잰 것은 `results/stage1-r20/`, 원인 확인 실험은 `results/exp-<실험>/`에 같은 이름으로 둔다([1단계 측정 결과](stage1.md#측정-기록)).
+- 2단계 CSV 의 열은 `include/util.h`의 `APP_CSV_HEADER`다. 실행 하나가 줄 두 개다: `role=clients`(실행기가 모든 클라이언트를 합친 줄), `role=server`(서버의 측정 구간 줄). 클라이언트를 혼자 돌려 `-o`로 쓰면 `role=client`.
+
+```text
+stage,ipc,role,experiment,commit,run,
+clients,rooms,inflight,rate_hz,workers,lock,tile,draw_pct,rect,snap,
+n,errors,elapsed_s,thr_req_s,thr_mb_s,
+lat_mean_us,lat_p50_us,lat_p99_us,lat_max_us,
+draw_n,draw_mean_us,draw_p50_us,draw_p99_us,draw_max_us,
+snap_n,snap_mean_us,snap_p50_us,snap_p99_us,snap_max_us,
+req_us,queue_us,lock_us,work_us,resp_us,
+utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb,
+ipc_cap_kb,ipc_rss_kb,ipc_min_chan,checksum_ok,env
+```
+
 - 2단계 파일: `results/app/<실험>.csv`(실행마다 클라이언트 줄 하나와 서버 줄 하나), 측정 환경 `results/app/app_env.txt`. 열은 `include/util.h`의 `APP_CSV_HEADER`이고 [2단계 실험](#2단계-실험)의 표와 같은 뜻이다. 원인 확인·설계 개선 실험은 `results/app/exp-<실험>.csv`다.
 - 실험의 비교 표는 `scripts/compare-bench.py`가 `docs/assets/bench/experiments.md`로 만든다.
 - 그래프는 이 CSV에서만 만든다. 축 이름과 단위(µs, ms, MB/s)를 표시하고, 같은 조건의 세 IPC를 한 그래프에 그린다.
