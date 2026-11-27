@@ -180,7 +180,9 @@ def t42():
             k = tuple(r[c] for c in keys)
             conds.setdefault(k, {}).setdefault(r['ipc'], set()).add(r['run'])
     for k, by_ipc in sorted(conds.items()):
-        for ipc in ('pipe', 'mq', 'shm'):
+        # 설계 개선(imp*)·메모리(mem-*) 실험은 그 개선이 있는 IPC 만 잰다(app-bench.sh 의 ipcs_for). 나머지는 세 IPC 모두
+        single = k[0].startswith('imp') or k[0].startswith('mem-')
+        for ipc in (sorted(by_ipc) if single else ('pipe', 'mq', 'shm')):
             n = len(by_ipc.get(ipc, ()))
             if n < 30:
                 problems.append(f'{k[0]} {dict(zip(keys[1:], k[1:]))}: {ipc} {n}번 (30번 이상이어야 한다)')
@@ -192,7 +194,7 @@ def t42():
         problems.append('설계 개선 전후 실험(imp-*)이 없다 (N-6)')
     if problems:
         finish(1, '2단계 원자료가 모자라다', problems[:20])
-    finish(0, f'2단계 실험 {len(exps)}개, 조건 {len(conds)}개 × IPC 3개, 조건마다 30번 이상')
+    finish(0, f'2단계 실험 {len(exps)}개, 조건 {len(conds)}개, 조건·IPC 마다 30번 이상 (개선·메모리 실험은 해당 IPC 만)')
 
 
 if __name__ == '__main__':

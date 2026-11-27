@@ -97,17 +97,18 @@ for t in T-40 T-41; do
     esac
 done
 
-# ---- 2단계 응용 (T-10 ~ T-25, T-31) ----
+# ---- 2단계 응용 (T-10 ~ T-26, T-31) ----
 # 실행 파일은 T-04·T-05 앞에서 만든 일반 빌드다. 서버를 띄우고 끝내는 도우미를 쓴다.
 APPS=""
 for i in pipe mq shm; do [ -x "bin/server_$i" ] && [ -x "bin/client_$i" ] && APPS="$APPS $i"; done
 work=$(mktemp -d)
 trap 'rm -f "$log"; rm -rf "$work"' EXIT
 SP=""
-# start_server ipc [옵션...] : 띄우고 "시작" 줄을 기다린다. SP 에 pid
+SENV=""          # 서버에만 줄 환경 변수 (VAR=값). 설계 개선 모드 시험(T-25, T-26)이 쓴다
+# start_server ipc [옵션...] : 띄우고 "시작" 줄을 기다린다. SP 에 pid (env 는 exec 하므로 서버의 pid 다)
 start_server() {
     local ipc=$1; shift
-    "bin/server_$ipc" -p "$work/c_$ipc.pgm" "$@" > "$work/srv.out" 2> "$work/srv.err" &
+    env $SENV "bin/server_$ipc" -p "$work/c_$ipc.pgm" "$@" > "$work/srv.out" 2> "$work/srv.err" &
     SP=$!
     # srv.err 를 비우는 리다이렉션은 자식이 한다. 자식이 늦게 돌면 직전 서버의 '시작' 줄이 아직 남아 있으므로
     # 이 서버의 pid 가 찍힌 줄만 인정한다 (CI 에서 T-22 가 이 경쟁으로 실패했다)
@@ -134,7 +135,7 @@ our_left() {
 }
 
 if [ -z "$APPS" ] || [ ! -x bin/verify ]; then
-    for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-23 T-24 T-25 T-31; do sk "$t" "2단계 실행 파일 없음"; done
+    for t in T-10 T-11 T-12 T-13 T-14 T-15 T-16 T-17 T-18 T-19 T-21 T-22 T-23 T-24 T-25 T-26 T-31; do sk "$t" "2단계 실행 파일 없음"; done
 else
     for ipc in $APPS; do
         # T-10 기본 동작: 그림판 2개, 클라이언트 4개(번호 i → 그림판 i mod 2), 체크섬 = 검증기
@@ -291,20 +292,57 @@ else
         else ok T-24 "$ipc -l none: 같은 칸 갱신이 사라져 체크섬이 검증기와 다름 (락이 경쟁을 막고 있다는 대조)"; fi
     else ng T-24 "$ipc 서버를 띄우지 못함"; fi
 
-    # T-25 ThreadSanitizer: 따로 빌드한 tsan/ 에서 T-10 을 줄여 돌린다
+    # T-26 설계 개선 모드 (N-6): mq 응답 큐 8개 + 요청 큐 입장 제한(OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1), shm 클라이언트별 요청 링(OSP_SHM_REQ=per).
+    # 전송 계층 시험 23개, T-10 과 같은 판정, 클라이언트 1024개 × 그림판 8개, kill -9 뒤 같은 번호 재접속
+    for m in "mq OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1" "shm OSP_SHM_REQ=per"; do
+        read -r ipc SENV <<< "$m"
+        case " $APPS " in *" $ipc "*) ;; *) sk T-26 "$ipc 실행 파일 없음"; SENV=""; continue ;; esac
+        r=""
+        if [ -x "bin/tptest_$ipc" ]; then
+            env $SENV timeout 300 scripts/test-transport.sh "$ipc" > "$log" 2>&1 || r="$r 전송계층($(grep -c '^FAIL' "$log")개 실패)"
+        fi
+        if start_server "$ipc" -K 2; then
+            pids=""; for i in 0 1 2 3; do timeout 60 "bin/client_$ipc" -i "$i" -k $((i % 2)) -n 2000 -f 4 -q > /dev/null 2>&1 & pids="$pids $!"; done
+            for p in $pids; do wait "$p" || r="$r 클라이언트"; done
+            stop_server || r="$r 서버"
+            same_sum -K 2 -s 1 -s 2 -s 3 -s 4 -n 2000 || r="$r 체크섬"
+        else r="$r 서버시작"; fi
+        if start_server "$ipc" -K 8; then
+            timeout 170 bin/loadgen -N 1024 -K 8 -M "$work/man.txt" -T 150 -q -- "bin/client_$ipc" -n 60 -w 5 > /dev/null 2>&1 || r="$r 1024개"
+            stop_server || r="$r 1024개서버"
+            same_sum -K 8 -M "$work/man.txt" || r="$r 1024개체크섬"
+        else r="$r 서버시작"; fi
+        if start_server "$ipc"; then             # 그림판 8개 (클라이언트 4 → 그림판 4)
+            "bin/client_$ipc" -i 4 -n 100000000 -f 4 -q > /dev/null 2>&1 & CP=$!
+            sleep 0.4; kill -9 "$CP"; wait "$CP" 2>/dev/null
+            timeout 30 "bin/client_$ipc" -i 4 -n 2000 -f 4 -q > /dev/null 2>&1 || r="$r 재접속"
+            stop_server || r="$r 재접속서버"
+        else r="$r 서버시작"; fi
+        [ -z "$r" ] && ok T-26 "$ipc $SENV: 전송 계층 시험, 클라이언트 4개·1024개 체크섬 = 검증기, kill -9 뒤 같은 번호 재접속" \
+                    || ng T-26 "$ipc $SENV:$r"
+        SENV=""
+        make -s ipcclean > /dev/null 2>&1
+    done
+
+    # T-25 ThreadSanitizer: 따로 빌드한 tsan/ 에서 T-10 을 줄여 돌린다. 설계 개선 모드 2개도 함께
     if echo 'int main(void){return 0;}' | gcc -fsanitize=thread -x c -o "$work/tsan_probe" - 2>/dev/null && "$work/tsan_probe" 2>/dev/null; then
         if make -s clean > /dev/null 2>&1 && make -s app EXTRA_CFLAGS='-fsanitize=thread -O1' > "$work/tsan_build" 2>&1; then
             tbad=""
-            for ipc in $APPS; do
+            modes=""; for ipc in $APPS; do modes="$modes $ipc"; done
+            case " $APPS " in *" mq "*) modes="$modes mq:OSP_MQ_RESP_Q=8,OSP_MQ_ADMIT=1" ;; esac
+            case " $APPS " in *" shm "*) modes="$modes shm:OSP_SHM_REQ=per" ;; esac
+            for m in $modes; do
+                ipc=${m%%:*}; SENV=""; [ "$m" != "$ipc" ] && SENV=${m#*:} && SENV=${SENV//,/ }
                 if start_server "$ipc" -K 2; then
                     pids=""; for i in 0 1 2 3; do TSAN_OPTIONS=halt_on_error=0 timeout 120 "bin/client_$ipc" -i "$i" -k $((i % 2)) -n 400 -f 4 -q > "$work/tc$i.out" 2>&1 & pids="$pids $!"; done
-                    for p in $pids; do wait "$p" || tbad="$tbad $ipc:client"; done
-                    stop_server || tbad="$tbad $ipc:server"
-                    same_sum -K 2 -s 1 -s 2 -s 3 -s 4 -n 400 || tbad="$tbad $ipc:checksum"
-                    grep -l 'ThreadSanitizer' "$work/srv.err" "$work"/tc*.out > /dev/null 2>&1 && tbad="$tbad $ipc:report"
-                else tbad="$tbad $ipc:start"; fi
+                    for p in $pids; do wait "$p" || tbad="$tbad $m:client"; done
+                    stop_server || tbad="$tbad $m:server"
+                    same_sum -K 2 -s 1 -s 2 -s 3 -s 4 -n 400 || tbad="$tbad $m:checksum"
+                    grep -l 'ThreadSanitizer' "$work/srv.err" "$work"/tc*.out > /dev/null 2>&1 && tbad="$tbad $m:report"
+                else tbad="$tbad $m:start"; fi
             done
-            [ -z "$tbad" ] && ok T-25 "ThreadSanitizer 빌드로 세 버전 클라이언트 4개, 보고 0건, 체크섬 일치" || ng T-25 "ThreadSanitizer:$tbad $(grep -h -m1 -A3 'WARNING: ThreadSanitizer' "$work/srv.err" "$work"/tc*.out | head -8)"
+            SENV=""
+            [ -z "$tbad" ] && ok T-25 "ThreadSanitizer 빌드로 세 버전과 개선 모드 2개, 클라이언트 4개, 보고 0건, 체크섬 일치" || ng T-25 "ThreadSanitizer:$tbad $(grep -h -m1 -A3 'WARNING: ThreadSanitizer' "$work/srv.err" "$work"/tc*.out | head -8)"
         else ng T-25 "ThreadSanitizer 빌드 실패"; head -5 "$work/tsan_build"; fi
         make -s clean > /dev/null 2>&1; make -s > /dev/null 2>&1          # 일반 빌드로 되돌린다
     else
