@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""측정 원자료 검사. make test 의 T-40, T-41 이 실행한다.
+"""측정 원자료 검사. make test 의 T-40, T-41, T-42 가 실행한다.
 
   check-results.py T-40   1단계 원자료에 메시지 크기 5단계 이상 × 클라이언트 1·2·4·8 × IPC 3종의 모든 조합이 있는가
-  check-results.py T-41   results/ 아래 모든 CSV 머리글이 원자료 형식의 열과 같은가
+  check-results.py T-41   results/ 아래 1단계 CSV 머리글이 원자료 형식의 열과 같은가 (2단계 results/app/ 은 T-42)
+  check-results.py T-42   2단계 원자료(results/app/)에 실험마다 세 IPC 가 같은 조건으로 30번 이상 있는가
 
 첫 줄에 한 줄 요약을 쓰고, 그다음 줄부터 문제를 쓴다.
 종료 코드: 0 = 통과, 1 = 실패, 2 = 검사할 원자료가 없다(SKIP).
@@ -100,9 +101,9 @@ def t41():
     if have_doc and code != doc:
         finish(1, '측정 방법 문서의 원자료 형식과 util.h 의 CSV_HEADER 가 다르다', [f'문서: {doc}', f'코드: {code}'])
     want = code.split(',')
-    files = sorted(glob.glob('results/**/*.csv', recursive=True))
+    files = sorted(f for f in glob.glob('results/**/*.csv', recursive=True) if not f.startswith('results/app/'))
     if not files:
-        finish(2, 'results/ 에 CSV 없음 (측정 전)')
+        finish(2, 'results/ 에 1단계 CSV 없음 (측정 전)')
     problems, n_rows = [], 0
     for f in files:
         with open(f, newline='', encoding='utf-8') as fp:
@@ -124,5 +125,11 @@ def t41():
     finish(0, f'CSV {len(files)}개, {n_rows}줄이 원자료 형식의 {len(want)}열과 같다{note}')
 
 
+def t42():
+    if not glob.glob('results/app/*.csv'):
+        finish(2, '2단계 원자료 없음 (측정 전)')
+    finish(1, '2단계 원자료 검사는 측정 스크립트와 함께 채운다')
+
+
 if __name__ == '__main__':
-    {'T-40': t40, 'T-41': t41}.get(sys.argv[1] if len(sys.argv) > 1 else '', lambda: finish(64, __doc__))()
+    {'T-40': t40, 'T-41': t41, 'T-42': t42}.get(sys.argv[1] if len(sys.argv) > 1 else '', lambda: finish(64, __doc__))()

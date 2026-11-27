@@ -17,8 +17,8 @@ import urllib.parse
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 errors = []
 
-if not os.path.exists('docs/requirements/README.md'):
-    print('문서 없음 (docs/requirements/README.md 가 없다. make dist 로 만든 제출용 tar 등)')
+if not os.path.isdir('docs'):
+    print('문서 없음 (docs/ 가 없다. make dist 로 만든 제출용 tar 등)')
     sys.exit(2)
 
 
