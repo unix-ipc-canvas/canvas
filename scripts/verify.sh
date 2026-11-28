@@ -78,7 +78,7 @@ else
         maxp=$((32 + 1024 * 1024))
         for b in $b_have; do
             bad=""
-            for args in "-c 1 -s 64 -n 2000 -f 1" "-c 8 -s 4097 -n 800 -f 16" "-c 4 -s $maxp -n 40 -f 4" "-c 2 -s 0 -n 500 -f 8"; do
+            for args in "-c 1 -s 64 -n 2000 -f 1" "-c 8 -s 4097 -n 800 -f 16" "-c 4 -s $maxp -n 40 -f 4" "-c 2 -s 0 -n 500 -f 8" "-c 1024 -s 64 -n 2048 -f 1"; do
                 timeout 120 "$b" $args -w 4 -V >"$log" 2>&1 || bad="$bad [$args] $(tail -1 "$log")"
             done
             if [ -z "$bad" ]; then ok T-05 "$(basename "$b") -V 내용 검사"; else ng T-05 "$(basename "$b") -V:$bad"; fi

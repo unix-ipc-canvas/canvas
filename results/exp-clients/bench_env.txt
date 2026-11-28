@@ -1,0 +1,108 @@
+# scripts/bench.sh 가 측정을 시작할 때 기록한 환경
+date: 2026-11-28T16:33:58+09:00
+commit: b44b78c
+reps: 30, ipcs: pipe mq shm, sizes: 64 65536, clients: 1 2 4 8 16 64 256 1024, inflight: 16, modes: latency
+power: ADP1 online=1 BAT1 Not charging 100%, profile balanced
+
+## lscpu
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      33%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+
+## free -h
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       8.4Gi       2.6Gi       2.9Gi       7.7Gi       6.9Gi
+
+## os
+Ubuntu 26.04.1 LTS
+7.0.0-44-generic
+
+## gcc
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+
+## virtualization
+none
+
+## cpufreq governor
+     12 powersave
+
+## CPU 배치 (taskset 으로 묶었는지)
+pid 1658082's current affinity list: 0-11
+
+## IPC 한도
+msgmax: 8192
+msgmnb: 16384
+PIPE_BUF: 4096
+pipe-max-size: 1048576
+sem (SEMMSL SEMMNS SEMOPM SEMMNI): 32000	1024000000	500	32000
+shmmax: 18446744073692774399
+
+## ipcs -l
+
+------ Messages Limits --------
+max queues system wide = 32000
+max size of message (bytes) = 8192
+default max size of queue (bytes) = 16384
+
+------ Shared Memory Limits --------
+max number of segments = 4096
+max seg size (kbytes) = 18014398509465599
+max total shared memory (kbytes) = 18446744073709551612
+min seg size (bytes) = 1
+
+------ Semaphore Limits --------
+max number of arrays = 32000
+max semaphores per array = 32000
+max semaphores system wide = 1024000000
+max ops per semop call = 500
+semaphore max value = 32767
+
+
+## 측정 시작 때 CPU 를 쓰는 프로세스 (끌 수 없는 프로그램 확인용)
+ 16:33:58 up 20:23,  1 user,  load average: 0.85, 1.59, 1.73
+top - 16:33:59 up 20:23,  1 user,  load average: 0.85, 1.59, 1.73
+Tasks: 440 total,   1 running, 439 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  4.5 us,  1.4 sy,  0.0 ni, 94.1 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15668.7 total,   2938.1 free,   8264.5 used,   7683.3 buff/cache     
+MiB Swap:   4096.0 total,   2764.0 free,   1332.0 used.   7404.2 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+1595308 movingg+  20   0   12.7g 696452 347804 S  23.8   4.3   0:30.34 firefox
+   4598 movingg+  20   0 9456636 227744 112008 S  16.8   1.4  49:33.35 gnome-shell
+   8454 movingg+  20   0 1454.1g   1.2g 143440 S  11.9   7.5  79:43.86 claude-desktop
+  40067 movingg+  20   0 5819480   1.4g   1.4g S  10.9   9.3  92:03.97 qemu-system-x86
+1596363 movingg+  20   0 2997916 174872 118944 S   8.9   1.1   0:06.54 Isolated Web Co
+   9395 movingg+  20   0 5723764 152656  12236 S   3.0   1.0   6:39.72 claude
+   8132 movingg+  20   0   53.0g  79076  74200 S   1.0   0.5  88:53.76 claude-desktop
+ 236019 movingg+  20   0 2931280  67328  51572 S   1.0   0.4   0:01.80 gjs
+1457375 root      20   0       0      0      0 I   1.0   0.0   0:02.27 kworker/7:1-mm_percpu_wq
+1498942 movingg+  20   0 1448.5g 297728 218704 S   1.0   1.9   0:20.60 slack
+1499279 movingg+  20   0 1448.0g 437400 128932 S   1.0   2.7   0:36.42 slack
+1549738 root       0 -20       0      0      0 I   1.0   0.0   0:02.93 kworker/u49:0-i915_flip
+
+## 측정 끝: 2026-11-28T17:12:38+09:00, 2319초, 실행 1440 번, 실패 0 번, 전원 ADP1 online=1 BAT1 Not charging 100%
+
+## 측정 끝 때 CPU 를 쓰는 프로세스
+ 17:12:38 up 21:02,  1 user,  load average: 11.20, 12.93, 9.34
+top - 17:12:39 up 21:02,  1 user,  load average: 11.20, 12.93, 9.34
+Tasks: 411 total,   1 running, 410 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  3.5 us,  1.4 sy,  0.0 ni, 95.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st 
+MiB Mem :  15668.7 total,   5020.4 free,   6038.9 used,   6991.1 buff/cache     
+MiB Swap:   4096.0 total,   2764.2 free,   1331.8 used.   9629.9 avail Mem 
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   8132 movingg+  20   0   53.0g  78520  73000 S  34.3   0.5  90:59.34 claude-desktop
+   4598 movingg+  20   0 9460652 220852 104708 S   8.8   1.4  52:21.85 gnome-shell
+   8454 movingg+  20   0 1454.1g   1.1g 146004 S   8.8   7.3  81:52.57 claude-desktop
+  40067 movingg+  20   0 5819480   1.4g   1.4g S   6.9   9.3  93:17.92 qemu-system-x86
+   8070 movingg+  20   0 1448.7g 278172 119104 S   2.9   1.7  16:30.80 claude-desktop
+     15 root      20   0       0      0      0 I   1.0   0.0   1:10.22 rcu_preempt
+1455555 movingg+  20   0 1452.0g 205580 109424 S   1.0   1.3   0:51.78 claude-desktop
+2039587 root       0 -20       0      0      0 I   1.0   0.0   0:02.67 kworker/u49:2-i915_flip
+      1 root      20   0   27192  14748   9252 S   0.0   0.1   0:09.97 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.12 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_workqueue_release
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker/R-rcu_gp

@@ -4,6 +4,7 @@
 #
 #   scripts/bench.sh                                       전체 (반복 20회)
 #   REPS=1 SIZES="64 1048576" CLIENTS="1 8" OUT=/tmp/x scripts/bench.sh   일부만, 다른 곳에
+#   MODES=latency ...                                      동시 요청 1개 실행만 (1단계 보강 exp-stage1.sh clients)
 #
 # 결과 (OUT, 기본 results/)
 #   bench_env.txt          측정 환경과 IPC 한도
@@ -11,6 +12,7 @@
 #   bench_latency.csv      동시 요청 1개. 지연을 볼 때 쓴다
 #   bench_throughput.csv   동시 요청 INFLIGHT 개. 처리량을 볼 때 쓴다
 # 이미 있는 CSV 에는 덧붙인다. 다시 처음부터 재려면 파일을 지우고 돌린다.
+# 전원 어댑터가 연결되고 배터리가 완충일 때만 잰다(11/28 추가, 2단계 app-bench.sh 와 같다). 측정 중에 바뀌면 멈춘다.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -19,12 +21,64 @@ IPCS=${IPCS:-"pipe upipe mq shm"}
 SIZES=${SIZES:-"64 1024 4096 16384 65536 262144 1048576"}
 CLIENTS=${CLIENTS:-"1 2 4 8"}
 INFLIGHT=${INFLIGHT:-16}
+MODES=${MODES:-"latency throughput"}
 OUT=${OUT:-results}
 
 # 크기별 측정 메시지 수(모든 클라이언트 합)와 클라이언트마다의 워밍업 수.
 # 작은 메시지는 상위 99% 가 뜻을 갖도록 표본을 많이, 큰 메시지는 실행 시간이 너무 길어지지 않게 줄인다.
-count_for() { if [ "$1" -le 16384 ]; then echo 20000; elif [ "$1" -le 65536 ]; then echo 10000; elif [ "$1" -le 262144 ]; then echo 4000; else echo 1000; fi; }
-warm_for()  { if [ "$1" -le 16384 ]; then echo 500;   elif [ "$1" -le 65536 ]; then echo 200;   elif [ "$1" -le 262144 ]; then echo 100;  else echo 30; fi; }
+# 클라이언트 16개 이상(1단계 보강)은 실행 한 번이 길어지지 않게 워밍업을 줄이고, 64KB 는 256개부터 측정 수도 줄인다.
+# 8개 이하의 값은 1단계 측정 때와 같다.
+count_for() {   # 크기 클라이언트수
+    if [ "$1" -le 16384 ]; then echo 20000
+    elif [ "$1" -le 65536 ]; then if [ "$2" -ge 256 ]; then echo 4096; else echo 10000; fi
+    elif [ "$1" -le 262144 ]; then echo 4000
+    else echo 1000; fi
+}
+warm_for() {    # 크기 클라이언트수
+    local w
+    if [ "$1" -le 16384 ]; then w=500; elif [ "$1" -le 65536 ]; then w=200; elif [ "$1" -le 262144 ]; then w=100; else w=30; fi
+    if [ "$2" -ge 1024 ]; then w=$(( w / 100 > 2 ? w / 100 : 2 ))
+    elif [ "$2" -ge 256 ]; then w=$(( w / 20 > 2 ? w / 20 : 2 ))
+    elif [ "$2" -ge 16 ]; then w=$(( w / 4 ))
+    fi
+    echo "$w"
+}
+for m in $MODES; do case $m in latency|throughput) ;; *) echo "MODES 는 latency, throughput 중에서: $m" >&2; exit 64 ;; esac; done
+
+# 전원. 노트북은 배터리로 돌면 CPU 전력 한도가 낮아져 처리량이 절반 아래로 떨어진다.
+# 어댑터(Mains)가 연결되고 배터리가 충전 중도 방전 중도 아닐(완충) 때만 잰다. 어댑터가 없는 컴퓨터(데스크톱, CI)는 연결된 것으로 본다
+ac_online() {
+    local p found=0
+    for p in /sys/class/power_supply/*; do
+        [ "$(cat "$p/type" 2>/dev/null)" = Mains ] || continue
+        found=1
+        [ "$(cat "$p/online" 2>/dev/null)" = 1 ] && return 0
+    done
+    [ $found -eq 0 ]
+}
+power_ok() {
+    ac_online || return 1
+    local p
+    for p in /sys/class/power_supply/*; do
+        [ "$(cat "$p/type" 2>/dev/null)" = Battery ] || continue
+        case $(cat "$p/status" 2>/dev/null) in Charging|Discharging) return 1 ;; esac
+    done
+    return 0
+}
+power_desc() {
+    local p out=""
+    for p in /sys/class/power_supply/*; do
+        case $(cat "$p/type" 2>/dev/null) in
+        Mains)   out="$out $(basename "$p") online=$(cat "$p/online" 2>/dev/null)" ;;
+        Battery) out="$out $(basename "$p") $(cat "$p/status" 2>/dev/null) $(cat "$p/capacity" 2>/dev/null)%" ;;
+        esac
+    done
+    echo "${out# }"
+}
+if ! power_ok && [ -z "${ALLOW_BATTERY:-}" ]; then
+    echo "전원 어댑터 연결 + 완충 상태가 아니다($(power_desc)). 그 상태에서 잰다 (시험 삼아 돌릴 때는 ALLOW_BATTERY=1)" >&2
+    exit 1
+fi
 
 # 측정한 코드를 커밋으로 남긴다. 커밋하지 않은 변경이 있으면 멈춘다 (ALLOW_DIRTY=1 이면 -dirty 를 붙여 계속)
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -54,7 +108,8 @@ cpu_snapshot() {
     echo "# scripts/bench.sh 가 측정을 시작할 때 기록한 환경"
     echo "date: $(date -Iseconds)"
     echo "commit: $commit"
-    echo "reps: $REPS, ipcs: $IPCS, sizes: $SIZES, clients: $CLIENTS, inflight: $INFLIGHT"
+    echo "reps: $REPS, ipcs: $IPCS, sizes: $SIZES, clients: $CLIENTS, inflight: $INFLIGHT, modes: $MODES"
+    echo "power: $(power_desc), profile $(powerprofilesctl get 2>/dev/null || echo -)"
     echo
     echo "## lscpu"; lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz'
     echo; echo "## free -h"; free -h | head -2
@@ -78,15 +133,21 @@ cpu_snapshot() {
 
 # ---- 측정 ----
 n_runs=0
-for _ in $(seq "$REPS"); do for _ in $SIZES; do for _ in $CLIENTS; do for _ in $IPCS; do n_runs=$((n_runs + 2)); done; done; done; done
-echo "측정 시작: 커밋 $commit, 실행 $n_runs 번 (+ clock $REPS 번), 결과는 $OUT/"
+for _ in $(seq "$REPS"); do for _ in $SIZES; do for _ in $CLIENTS; do for _ in $IPCS; do for _ in $MODES; do n_runs=$((n_runs + 1)); done; done; done; done; done
+echo "측정 시작: 커밋 $commit, 실행 $n_runs 번 (+ clock $REPS 번), 결과는 $OUT/, 전원 $(power_desc)"
 start=$(date +%s)
 done_runs=0
 failed=0
 read -r -a ipc_list <<< "$IPCS"
 
 run_one() {   # ipc size clients inflight experiment rep csv
-    local args=(-c "$3" -s "$2" -n "$(count_for "$2")" -w "$(warm_for "$2")" -f "$4" -e "$5" -r "$6" -C "$commit" -o "$7")
+    if ! power_ok && [ -z "${ALLOW_BATTERY:-}" ]; then
+        echo "중단: 측정 중에 전원 상태가 바뀌었다(반복 $6, $(date +%T), $(power_desc)). 이 측정의 원자료는 쓰지 않는다" >&2
+        echo "## 중단: $(date -Iseconds), 전원 $(power_desc)" >> "$OUT/bench_env.txt"
+        make -s ipcclean >/dev/null
+        exit 3
+    fi
+    local args=(-c "$3" -s "$2" -n "$(count_for "$2" "$3")" -w "$(warm_for "$2" "$3")" -f "$4" -e "$5" -r "$6" -C "$commit" -o "$7")
     if ! "bin/bench_$1" "${args[@]}"; then
         echo "실패: $1 size=$2 clients=$3 inflight=$4 rep=$6. 자원을 치우고 한 번 더 한다" >&2
         make -s ipcclean >/dev/null
@@ -107,8 +168,10 @@ for rep in $(seq "$REPS"); do
     for size in $SIZES; do
         for c in $CLIENTS; do
             for ipc in "${order[@]}"; do
-                run_one "$ipc" "$size" "$c" 1 latency "$rep" "$OUT/bench_latency.csv"
-                run_one "$ipc" "$size" "$c" "$INFLIGHT" throughput "$rep" "$OUT/bench_throughput.csv"
+                for m in $MODES; do
+                    if [ "$m" = latency ]; then run_one "$ipc" "$size" "$c" 1 latency "$rep" "$OUT/bench_latency.csv"
+                    else run_one "$ipc" "$size" "$c" "$INFLIGHT" throughput "$rep" "$OUT/bench_throughput.csv"; fi
+                done
             done
         done
     done
@@ -119,7 +182,7 @@ elapsed=$(( $(date +%s) - start ))
 echo "측정 끝: ${elapsed}초, 실패 $failed 번"
 {
     export LC_ALL=C
-    echo; echo "## 측정 끝: $(date -Iseconds), ${elapsed}초, 실행 $done_runs 번, 실패 $failed 번"
+    echo; echo "## 측정 끝: $(date -Iseconds), ${elapsed}초, 실행 $done_runs 번, 실패 $failed 번, 전원 $(power_desc)"
     echo; echo "## 측정 끝 때 CPU 를 쓰는 프로세스"; cpu_snapshot
 } >> "$OUT/bench_env.txt"
 team=$(sed -n 's/^TEAM_NO ?= *//p' Makefile)

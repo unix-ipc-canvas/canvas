@@ -78,6 +78,8 @@ make bench
 ./bin/bench_shm -c 4 -s 65536 -n 10000 -f 16      # 동시 요청 16개, 처리량
 scripts/bench.sh                                  # 1단계 전체 측정 → results/
 python3 scripts/plot-bench.py results/stage1-r20 docs/assets/bench/stage1-r20
+EXPS="clients" scripts/exp-stage1.sh              # 1단계 보강: 클라이언트 1~1024, 반복 30 (약 40분) → results/exp-clients/
+python3 scripts/plot-clients.py                   # 1단계 보강 그래프와 요약표 → docs/assets/bench/exp-clients/
 ```
 
 ### 2단계 서버
@@ -146,7 +148,8 @@ kill -INT %1                             # 서버의 checksum 줄과
 ```bash
 scripts/app-bench.sh                                  # 실험 11개, 조건마다 30번 (약 3시간) → results/app/<실험>.csv
 EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh   # 본 측정 뒤 추가한 원인 확인 실험 4개 (약 30분)
-EXPS="target-ph imp-target-ph cause-pipe imp-pipe" scripts/app-bench.sh       # 위상을 흩은 목표 부하, pipe 원인 확인·개선 (약 1시간)
+EXPS="cause-pipe" scripts/app-bench.sh               # pipe 원인 확인 (약 7분)
+EXPS="imp-all target-all cause-scan" scripts/app-bench.sh   # 세 IPC 개선 전후, 목표 부하 전후, shm 링 훑기 확인 (약 1시간 15분)
 REPS=2 EXPS="scale" OUT=/tmp/x scripts/app-bench.sh   # 일부만 짧게 (원자료로 쓰지 않음)
 python3 scripts/plot-app.py                           # 요약표와 그래프 → docs/assets/app/
 scripts/race-start.sh -n 150 -l 12                    # 시작 구간 경쟁 재현 실험 (검증 문서)
@@ -154,7 +157,7 @@ scripts/syscall-count.sh 20000 -m 90 -f 16            # 요청 하나당 시스�
 scripts/demo-check.sh 1024 3                          # 데모: 세 버전 × 클라이언트 1024개, 체크섬과 남은 자원
 ```
 
-설계 개선은 서버 환경 변수로 켠다(기본값은 처음 설계). `OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 ./bin/server_mq`(mq 응답 큐 8개 + 요청 큐 입장 제한), `OSP_SHM_REQ=per ./bin/server_shm`(shm 클라이언트별 요청 링), `OSP_PIPE_RESP=1 ./bin/server_pipe -N 64`(pipe 응답 FIFO 용량 키우기. 받을 클라이언트 수 `-N`으로 사용자별 파이프 버퍼 한도를 나눈 몫 안에서 키운다).
+설계 개선은 서버 환경 변수로 켠다(기본값은 처음 설계). `OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 ./bin/server_mq`(mq 응답 큐 8개 + 요청 큐 입장 제한), `OSP_SHM_REQ=per ./bin/server_shm`(shm 클라이언트별 요청 링), `OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1 ./bin/server_pipe`(pipe 응답 FIFO 키우기 + 송신 스레드. 클라이언트당 버퍼 160KB 안에서).
 
 ## 테스트
 

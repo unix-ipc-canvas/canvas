@@ -1,0 +1,41 @@
+16:32:38 ac=1 bat=Not charging/100% load=2.04 heavy=[] | 16:32:35 전원 연결/Not charging 부하 2.22 무거운 프로세스 [] 연속 0
+16:33:38 ac=1 bat=Not charging/100% load=0.97 heavy=[] | 16:33:36 전원 연결/Not charging 부하 1.06 무거운 프로세스 [] 연속 2
+16:34:38 ac=1 bat=Not charging/100% load=3.04 heavy=[] | 측정 시작: 커밋 b44b78c, 실행 1440 번 (+ clock 30 번), 결과는 results/exp-clients/, 전원 ADP1 online=1 BAT1 Not charging 100%
+16:35:38 ac=1 bat=Not charging/100% load=6.30 heavy=[] | 반복 1/30 끝: 48/1440, 74초
+16:36:39 ac=1 bat=Not charging/100% load=7.62 heavy=[] | 반복 2/30 끝: 96/1440, 148초
+16:37:39 ac=1 bat=Not charging/100% load=6.91 heavy=[] | 반복 2/30 끝: 96/1440, 148초
+16:38:39 ac=1 bat=Not charging/100% load=11.67 heavy=[] | 반복 3/30 끝: 144/1440, 223초
+16:39:39 ac=1 bat=Not charging/100% load=7.04 heavy=[] | 반복 4/30 끝: 192/1440, 298초
+16:40:39 ac=1 bat=Not charging/100% load=7.71 heavy=[] | 반복 5/30 끝: 240/1440, 374초
+16:41:40 ac=1 bat=Not charging/100% load=5.87 heavy=[] | 반복 6/30 끝: 288/1440, 447초
+16:42:40 ac=1 bat=Not charging/100% load=6.31 heavy=[] | 반복 7/30 끝: 336/1440, 520초
+16:43:40 ac=1 bat=Not charging/100% load=6.42 heavy=[] | 반복 7/30 끝: 336/1440, 520초
+16:44:40 ac=1 bat=Not charging/100% load=4.87 heavy=[] | 반복 8/30 끝: 384/1440, 596초
+16:45:40 ac=1 bat=Not charging/100% load=5.46 heavy=[1992137 40.0 38 Isolated Web Co;1990945 38.7 42 firefox;] | 반복 9/30 끝: 432/1440, 674초
+16:46:40 ac=1 bat=Not charging/100% load=5.30 heavy=[] | 반복 10/30 끝: 480/1440, 752초
+16:47:41 ac=1 bat=Not charging/100% load=4.92 heavy=[] | 반복 10/30 끝: 480/1440, 752초
+16:48:41 ac=1 bat=Not charging/100% load=4.64 heavy=[] | 반복 11/30 끝: 528/1440, 830초
+16:49:41 ac=1 bat=Not charging/100% load=5.34 heavy=[] | 반복 12/30 끝: 576/1440, 908초
+16:50:41 ac=1 bat=Not charging/100% load=7.67 heavy=[] | 반복 13/30 끝: 624/1440, 992초
+16:51:41 ac=1 bat=Not charging/100% load=6.18 heavy=[] | 반복 13/30 끝: 624/1440, 992초
+16:52:41 ac=1 bat=Not charging/100% load=7.29 heavy=[] | 반복 14/30 끝: 672/1440, 1071초
+16:53:42 ac=1 bat=Not charging/100% load=7.24 heavy=[] | 반복 15/30 끝: 720/1440, 1153초
+16:54:42 ac=1 bat=Not charging/100% load=12.33 heavy=[] | 반복 16/30 끝: 768/1440, 1236초
+16:55:42 ac=1 bat=Not charging/100% load=8.07 heavy=[] | 반복 16/30 끝: 768/1440, 1236초
+16:56:42 ac=1 bat=Not charging/100% load=7.91 heavy=[] | 반복 17/30 끝: 816/1440, 1316초
+16:57:42 ac=1 bat=Not charging/100% load=6.83 heavy=[] | 반복 18/30 끝: 864/1440, 1399초
+16:58:42 ac=1 bat=Not charging/100% load=7.51 heavy=[] | 반복 19/30 끝: 912/1440, 1481초
+16:59:43 ac=1 bat=Not charging/100% load=7.27 heavy=[] | 반복 19/30 끝: 912/1440, 1481초
+17:00:43 ac=1 bat=Not charging/100% load=4.99 heavy=[] | 반복 20/30 끝: 960/1440, 1557초
+17:01:43 ac=1 bat=Not charging/100% load=5.51 heavy=[] | 반복 21/30 끝: 1008/1440, 1633초
+17:02:43 ac=1 bat=Not charging/100% load=5.33 heavy=[] | 반복 22/30 끝: 1056/1440, 1711초
+17:03:43 ac=1 bat=Not charging/100% load=5.45 heavy=[] | 반복 22/30 끝: 1056/1440, 1711초
+17:04:44 ac=1 bat=Not charging/100% load=6.53 heavy=[] | 반복 23/30 끝: 1104/1440, 1789초
+17:05:44 ac=1 bat=Not charging/100% load=4.77 heavy=[] | 반복 24/30 끝: 1152/1440, 1865초
+17:06:44 ac=1 bat=Not charging/100% load=17.20 heavy=[] | 반복 25/30 끝: 1200/1440, 1938초
+17:07:44 ac=1 bat=Not charging/100% load=9.94 heavy=[] | 반복 26/30 끝: 1248/1440, 2011초
+17:08:44 ac=1 bat=Not charging/100% load=7.97 heavy=[] | 반복 27/30 끝: 1296/1440, 2084초
+17:09:44 ac=1 bat=Not charging/100% load=7.94 heavy=[] | 반복 27/30 끝: 1296/1440, 2084초
+17:10:44 ac=1 bat=Not charging/100% load=35.21 heavy=[] | 반복 28/30 끝: 1344/1440, 2163초
+17:11:45 ac=1 bat=Not charging/100% load=16.54 heavy=[] | 반복 29/30 끝: 1392/1440, 2241초
+측정 끝
