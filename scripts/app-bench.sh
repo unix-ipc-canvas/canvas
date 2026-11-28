@@ -21,8 +21,11 @@
 #   target-ph, imp-target-ph      목표 부하를 클라이언트마다 위상을 흩어 다시 잰다(11/28 추가). target·imp-target 은 처음처럼
 #                                 위상을 맞춘다(클라이언트 -A). 위상을 맞추면 도착이 주기마다 몰리고 그 모양이 IPC마다 달랐다
 #   cause-pipe                    원인 확인(pipe, 11/28 추가): 요청 받기 방식(OSP_PIPE_RBUF)과 응답 FIFO 용량(OSP_PIPE_RESP_SZ)만 바꾼다
-#   imp-pipe                      개선 전후(pipe): 응답 FIFO 용량 키우기(OSP_PIPE_RESP=1), 서버 -N 은 클라이언트 수
-#                                 (넷 다 기본 목록에 없다. EXPS="target-ph imp-target-ph cause-pipe imp-pipe")
+#   imp-all                       개선 전후(11/28 추가): 세 IPC 를 같은 조건 목록으로, 처음 설계와 개선(IMP_ENV)을 한 반복 안에서
+#                                 번갈아 잰다(짝수 반복은 조건 순서를 거꾸로). 클라이언트 1·64·256·1024 와 처리량(thr) 조건
+#   part-pipe                     pipe 개선의 부분별 효과(11/28 추가): 응답 FIFO 키우기(OSP_PIPE_GROW)만 / 송신 스레드(OSP_PIPE_ASYNC)만,
+#                                 클라이언트 64·256·1024 (둘 다 켠 것과 처음 설계는 imp-all 에 있다)
+#                                 (다섯 다 기본 목록에 없다. EXPS="imp-all target-ph imp-target-ph part-pipe", cause-pipe 는 따로)
 #
 # 실행 하나: 서버를 새로 띄우고 → 실행기가 클라이언트 N개를 워밍업시킨 뒤 함께 시작 → 끝나면 검증기로 정답을 만들어
 # 두고 서버를 SIGINT 로 끝낸다. 서버는 정답과 그림판 체크섬을 비교해 CSV 서버 줄의 checksum_ok 에 남긴다.
@@ -68,9 +71,11 @@ conds_for() {
                    for e in "" OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-m 0 -f 16|1|$e"; done
                    for e in "" OSP_PIPE_RBUF=1; do echo "-K 1|1|-m 100 -f 16|1|$e"; done
                    for e in "" OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-m 0 -S 256 -f 1|1|$e"; done ;;
-    imp-pipe)      for e in "" OSP_PIPE_RESP=1; do echo "-K 1 -N 1|1|-f 16|1|$e"; done
-                   for e in "" OSP_PIPE_RESP=1; do echo "-K 8 -N 64|64|-m 90 -f 1|2|$e"; done
-                   for e in "" OSP_PIPE_RESP=1; do echo "-K 8 -N 1024|1024|-m 90 -f 1|3|$e"; done ;;
+    imp-all)       for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3
+                       echo "-K 8|$n|-m 90 -f 1|$d|"; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done
+                   echo "-K 1|1|-f 16|1|"; echo "-K 1|1|-f 16|1|$IMP_ENV" ;;
+    part-pipe)     for n in 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3
+                       for e in OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1; do echo "-K 8|$n|-m 90 -f 1|$d|$e"; done; done ;;
     mem-shm)     for f in 1 4; do for c in 34 17; do echo "-K 8|1024|-m 90 -f $f|3|OSP_SHM_REQ=per OSP_SHM_RESP_CHUNKS=$c"; done; done ;;
     cause-workers) for wk in 1 2 4 8; do echo "-K 1 -w $wk|1|-f 16|1|"; done ;;
     cause-lockw)   for wk in 1 4 16; do echo "-K 1 -l room -w $wk|64|-f 1|2|"; done ;;
@@ -81,15 +86,16 @@ conds_for() {
 }
 
 # 개선한 설계 (서버에만 준다. 각 서버는 자기 IPC 의 변수만 읽는다)
-IMP_ENV="OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 OSP_SHM_REQ=per"
+# pipe 의 두 변수는 11/28 에 더했다. 그 전에 잰 imp-scale·imp-target 은 pipe 를 재지 않아 이 변수들과 관계없다
+IMP_ENV="OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 OSP_SHM_REQ=per OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1"
 
 # 실험마다 재는 IPC. 개선·메모리 실험은 그 개선이 있는 IPC 만 (T-42 도 이렇게 센다)
 ipcs_for() {
     case $1 in
     imp-mq-q|imp-mq-req)  echo "mq" ;;
-    imp-scale|imp-target|imp-target-ph) echo "mq shm" ;;
+    imp-scale|imp-target) echo "mq shm" ;;
     mem-shm|cause-ring)   echo "shm" ;;
-    cause-pipe|imp-pipe)  echo "pipe" ;;
+    cause-pipe|part-pipe) echo "pipe" ;;
     *)                    echo "$IPCS" ;;
     esac
 }
@@ -172,7 +178,11 @@ for exp in $EXPS; do
         # 반복마다 IPC 순서를 돌린다 (pipe mq shm → mq shm pipe → shm pipe mq)
         read -r -a order <<< "$exp_ipcs"
         k=$(( (rep - 1) % ${#order[@]} )); order=("${order[@]:k}" "${order[@]:0:k}")
-        for c in "${CONDS[@]}"; do
+        conds=("${CONDS[@]}")
+        if [ "$exp" = imp-all ] && (( rep % 2 == 0 )); then        # 짝수 반복은 조건 순서를 거꾸로 (순서의 영향을 상쇄)
+            conds=(); for ((ci = ${#CONDS[@]} - 1; ci >= 0; ci--)); do conds+=("${CONDS[ci]}"); done
+        fi
+        for c in "${conds[@]}"; do
             IFS='|' read -r sopts n copts dur senv <<< "$c"
             for ipc in "${order[@]}"; do run_one "$exp" "$ipc" "$rep" "$sopts" "$n" "$copts" "$dur" "$senv"; done
         done
