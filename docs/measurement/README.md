@@ -140,15 +140,18 @@ sequenceDiagram
 | `cause-mix` (본 측정 뒤 추가) | 요청 종류: DRAW만(`-m 100`) / SNAPSHOT만(`-m 0`) | `thr`와 같음 | 셋 | P3가 틀린 원인: 작은 요청과 64KB 요청의 비용이 IPC마다 어떻게 다른지 |
 | `cause-ring` (본 측정 뒤 추가) | shm 응답 링 칸 수 34·68·136 (`OSP_SHM_RESP_CHUNKS`) | `thr`와 같음 | shm | P3가 틀린 원인 후보: 응답 링에 64KB 응답이 2개만 들어가서인지 |
 | `target-ph` (11/28 추가) | (사람 속도 부하) 보내는 위상을 클라이언트 번호로 흩음 | `target`과 같음 | 셋 | 위상을 맞춘 `target`의 지연이 도착 모양 때문인지, 요구사항 N-2 |
-| `imp-target-ph` (11/28 추가) | `target-ph`를 개선한 설계로 | `target`과 같음 | mq, shm | 개선 뒤 요구사항 N-2 |
+| `imp-target-ph` (11/28 추가) | `target-ph`를 개선한 설계로 | `target`과 같음 | 셋 | 개선 뒤 요구사항 N-2 |
 | `cause-pipe` (11/28 추가) | 요청 받기 방식(받기 버퍼 `OSP_PIPE_RBUF=1`) / 응답 FIFO 용량 64KB·128KB·1MB(`OSP_PIPE_RESP_SZ`) | 클라이언트 1, 그림판 1. 기준 혼합·SNAPSHOT만·DRAW만은 동시 요청 16, SNAPSHOT 256 × 256 지연은 동시 요청 1 | pipe | pipe가 약한 원인이 메시지마다 `read` 2번인지, 응답 FIFO 용량(가장 큰 응답보다 56B 작음)인지 |
-| `imp-pipe` (11/28 추가) | 처음 설계 / 응답 FIFO 용량 키우기(`OSP_PIPE_RESP=1`) | 서버 `-N` = 클라이언트 수. 클라이언트 1 × 동시 요청 16, 64·1024 × 동시 요청 1, 기준 혼합 | pipe | pipe 개선 전후(요구사항 N-6). 1024개는 한도로 키우지 못해 그대로인지 |
+| `imp-all` (11/28 추가) | 처음 설계 / 개선한 설계(세 IPC의 개선을 모두 켠 환경 변수 묶음) | 클라이언트 1·64·256·1024(`scale`의 기준 혼합 조건)와 `thr` 조건. 한 반복 안에서 전후를 번갈아 재고, 짝수 반복은 조건 순서를 거꾸로 | 셋 | 세 IPC의 개선 전후를 같은 조건·같은 시간대에서 비교(요구사항 N-6) |
+| `part-pipe` (11/28 추가) | pipe 개선의 한 부분만: 응답 FIFO 키우기(`OSP_PIPE_GROW=1`) / 송신 스레드(`OSP_PIPE_ASYNC=1`) | 클라이언트 64·256·1024, 기준 혼합 | pipe | 두 부분이 각각 어느 규모에서 효과가 있는지 |
 
-본 측정 뒤에 추가한 실험은 기본 목록에 없어 `EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh`, `EXPS="target-ph imp-target-ph cause-pipe imp-pipe" scripts/app-bench.sh`로 따로 돌린다. 요청 하나당 시스템 콜 수는 `scripts/syscall-count.sh 20000 -m 90 -f 16`이 서버와 클라이언트를 `strace -f -c`로 감싸 센다(결과 `results/app/syscalls.txt`, strace가 느리게 하므로 시간은 쓰지 않는다).
+본 측정 뒤에 추가한 실험은 기본 목록에 없어 `EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh`, `EXPS="cause-pipe" scripts/app-bench.sh`, `EXPS="imp-all target-ph imp-target-ph part-pipe" scripts/app-bench.sh`로 따로 돌린다. 요청 하나당 시스템 콜 수는 `scripts/syscall-count.sh 20000 -m 90 -f 16`이 서버와 클라이언트를 `strace -f -c`로 감싸 센다(결과 `results/app/syscalls.txt`, strace가 느리게 하므로 시간은 쓰지 않는다).
 
-개선한 설계는 mq 응답 큐 8개 + 요청 큐 입장 제한(`OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1`), shm 클라이언트별 요청 링(`OSP_SHM_REQ=per`), pipe 응답 FIFO 용량 키우기(`OSP_PIPE_RESP=1`, 서버 `-N`에 클라이언트 수)다. 설계는 [설계 명세의 변경 기록](../design/README.md#변경-기록)에, 결과는 [2단계 측정 결과](stage2.md)에 있다.
+처음 pipe 개선 실험(`imp-pipe`, 응답 FIFO를 서버 `-N`에 맞춰 512KB~1MB로 키움)은 다른 IPC와 조건이 달라(서버 `-N`, 클라이언트당 버퍼가 요구사항 N-5의 160KB 초과, 조건 목록) 측정 중에 멈추고 버렸다. 그 대신 세 IPC를 같은 조건 목록으로 재는 `imp-all`을 만들었다.
 
-공통 조건: 서버 워커 4(`cause-workers`·`cause-lockw` 빼고), 타일 64, 클라이언트마다 워밍업 요청 200개(클라이언트 256 이상은 50개). 측정 시간(`-d`)은 `type`·`thr`·`cause-workers`·`cause-mix`·`cause-ring` 1초, `scale`·`lock`·`imp-scale`·`cause-lockw` 2초(클라이언트 256 이상 3초), `target`과 그 밖의 원인 확인·개선 실험 3초다(`cause-pipe` 1초, `imp-pipe`는 `scale`과 같다).
+개선한 설계는 mq 응답 큐 8개 + 요청 큐 입장 제한(`OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1`), shm 클라이언트별 요청 링(`OSP_SHM_REQ=per`), pipe 응답 FIFO 키우기 + 송신 스레드(`OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1`)다. 서버는 모두 기본 설정(받을 클라이언트 `-N 1024`), 커널 한도는 기본값이고, 개선도 클라이언트당 IPC 버퍼 160KB(요구사항 N-5)를 넘지 않는다. 설계는 [설계 명세의 변경 기록](../design/README.md#변경-기록)에, 결과는 [2단계 측정 결과](stage2.md)에 있다.
+
+공통 조건: 서버 워커 4(`cause-workers`·`cause-lockw` 빼고), 타일 64, 클라이언트마다 워밍업 요청 200개(클라이언트 256 이상은 50개). 측정 시간(`-d`)은 `type`·`thr`·`cause-workers`·`cause-mix`·`cause-ring` 1초, `scale`·`lock`·`imp-scale`·`cause-lockw` 2초(클라이언트 256 이상 3초), `target`과 그 밖의 원인 확인·개선 실험 3초다(`cause-pipe` 1초, `imp-all`·`part-pipe`는 `scale`·`thr`과 같다).
 
 실행 한 번의 순서(`scripts/app-bench.sh`)
 
@@ -239,7 +242,7 @@ utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb,
 ipc_cap_kb,ipc_rss_kb,ipc_min_chan,checksum_ok,env
 ```
 
-- 2단계 파일: `results/app/<실험>.csv`(실행마다 클라이언트 줄 하나와 서버 줄 하나), 측정 환경 `results/app/app_env.txt`. 열은 `include/util.h`의 `APP_CSV_HEADER`이고 [2단계 실험](#2단계-실험)의 표와 같은 뜻이다. 원인 확인·설계 개선 실험도 같은 폴더의 `<실험>.csv`다(`cause-procs.csv`, `imp-mq-q.csv`, `imp-mq-req.csv`, `imp-scale.csv`, `imp-target.csv`, `mem-shm.csv`, `cause-*.csv`, `target-ph.csv`, `imp-target-ph.csv`, `imp-pipe.csv`).
+- 2단계 파일: `results/app/<실험>.csv`(실행마다 클라이언트 줄 하나와 서버 줄 하나), 측정 환경 `results/app/app_env.txt`. 열은 `include/util.h`의 `APP_CSV_HEADER`이고 [2단계 실험](#2단계-실험)의 표와 같은 뜻이다. 원인 확인·설계 개선 실험도 같은 폴더의 `<실험>.csv`다(`cause-procs.csv`, `imp-mq-q.csv`, `imp-mq-req.csv`, `imp-scale.csv`, `imp-target.csv`, `mem-shm.csv`, `cause-*.csv`, `target-ph.csv`, `imp-target-ph.csv`, `imp-all.csv`, `part-pipe.csv`).
 - 1단계 원인 확인 실험의 비교 표는 `scripts/compare-bench.py`가 `docs/assets/bench/experiments.md`로 만든다. 2단계 요약표와 그래프는 `scripts/plot-app.py`가 `docs/assets/app/`에 만든다.
 - 그래프는 이 CSV에서만 만든다. 축 이름과 단위(µs, ms, MB/s)를 표시하고, 같은 조건의 세 IPC를 한 그래프에 그린다.
 
