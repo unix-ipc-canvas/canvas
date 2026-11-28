@@ -34,6 +34,7 @@ System V key 는 60020 ~ 60029(60xxy, 팀 번호 02), FIFO 는 /tmp/osproject_2_
    (5) 설계 개선 모드 (서버에만 환경 변수, 기본값은 처음 설계)
        OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 ./bin/server_mq     mq 응답 큐 8개 + 요청 큐 입장 제한
        OSP_SHM_REQ=per ./bin/server_shm                   shm 클라이언트별 요청 링
+       OSP_PIPE_RESP=1 ./bin/server_pipe -N 64            pipe 응답 FIFO 용량 키우기 (-N = 받을 클라이언트 수)
 
 4. 측정 재현 (측정용 컴퓨터 한 대에서, 다른 무거운 작업을 멈추고)
    scripts/bench.sh                          1단계 측정 -> results/bench_*.csv
@@ -44,6 +45,8 @@ System V key 는 60020 ~ 60029(60xxy, 팀 번호 02), FIFO 는 /tmp/osproject_2_
    scripts/race-start.sh -n 150 -l 12        시작 구간 경쟁 재현 실험
    EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh
                                              본 측정 뒤에 추가한 원인 확인 실험 4개 (약 30분)
+   EXPS="target-ph imp-target-ph cause-pipe imp-pipe" scripts/app-bench.sh
+                                             위상을 흩은 목표 부하, pipe 원인 확인·개선 (약 1시간)
    scripts/syscall-count.sh 20000 -m 90 -f 16   요청 하나당 시스템 콜 수 (strace -c)
    scripts/demo-check.sh 1024 3 [그림판 수]   세 버전 x 클라이언트 1024개: 체크섬과 남은 자원 확인
    측정 원자료는 results/ 에 있다 (1단계: bench_*.csv, stage1-r20/, exp-*/ / 2단계: app/, 측정 화면 기록 run-*.log, 감시 기록 monitor-*.log).
