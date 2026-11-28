@@ -1,0 +1,15 @@
+11:42:19 load=0.33 heavy=[] | 
+11:43:19 load=1.31 heavy=[] | 반복 1/30 끝 (cause-pipe): 실행 12번, 실패 0번, 14초
+11:44:19 load=1.84 heavy=[1397151 440 0 server_pipe;1397163 333 0 client_pipe;] | 반복 5/30 끝 (cause-pipe): 실행 60번, 실패 0번, 72초
+11:45:19 load=2.29 heavy=[1398952 226 1 server_pipe;] | 반복 9/30 끝 (cause-pipe): 실행 108번, 실패 0번, 130초
+11:46:19 load=2.22 heavy=[1400787 56.0 1 server_pipe;1400799 42.8 0 client_pipe;] | 반복 13/30 끝 (cause-pipe): 실행 156번, 실패 0번, 187초
+11:47:20 load=2.11 heavy=[] | 반복 18/30 끝 (cause-pipe): 실행 216번, 실패 0번, 259초
+11:48:20 load=2.19 heavy=[1404530 175 1 server_pipe;] | 반복 22/30 끝 (cause-pipe): 실행 264번, 실패 0번, 317초
+11:49:20 load=2.15 heavy=[1406364 94.5 0 server_pipe;1406376 78.0 0 client_pipe;] | 반복 26/30 끝 (cause-pipe): 실행 312번, 실패 0번, 375초
+11:50:20 load=3.54 heavy=[1408707 189 0 server_pipe;] | == imp-pipe: 조건 6개 × IPC [pipe] × 반복 30
+11:51:20 load=13.20 heavy=[1444103 306 2 server_pipe;] | 반복 4/30 끝 (imp-pipe): 실행 384번, 실패 0번, 493초
+11:52:20 load=11.78 heavy=[1479787 354 1 server_pipe;] | 반복 8/30 끝 (imp-pipe): 실행 408번, 실패 0번, 554초
+11:53:20 load=17.67 heavy=[1515537 334 1 server_pipe;] | 반복 12/30 끝 (imp-pipe): 실행 432번, 실패 0번, 615초
+11:54:20 load=19.42 heavy=[1551499 243 0 server_pipe;] | 반복 16/30 끝 (imp-pipe): 실행 456번, 실패 0번, 676초
+11:55:20 load=28.50 heavy=[1586891 301 2 server_pipe;] | 반복 20/30 끝 (imp-pipe): 실행 480번, 실패 0번, 736초
+11:56:20 load=19.91 heavy=[1622571 292 1 server_pipe;] | 반복 24/30 끝 (imp-pipe): 실행 504번, 실패 0번, 797초

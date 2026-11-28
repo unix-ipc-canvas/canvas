@@ -1,0 +1,84 @@
+14:01:28 ac=1 bat=Charging/99% load=0.52 heavy=[] | 14:01:25 어댑터 연결, 배터리 Charging 99%
+14:02:28 ac=1 bat=Charging/99% load=0.37 heavy=[] | 14:02:25 어댑터 연결, 배터리 Charging 99%
+14:03:28 ac=1 bat=Charging/99% load=0.42 heavy=[] | 14:03:26 어댑터 연결, 배터리 Charging 99%
+14:04:28 ac=1 bat=Charging/99% load=0.22 heavy=[] | 14:04:26 어댑터 연결, 배터리 Charging 99%
+14:05:28 ac=1 bat=Charging/99% load=0.17 heavy=[] | 14:05:26 어댑터 연결, 배터리 Charging 99%
+14:06:29 ac=1 bat=Charging/99% load=0.41 heavy=[] | 14:06:27 어댑터 연결, 배터리 Charging 99%
+14:07:29 ac=1 bat=Charging/99% load=0.19 heavy=[] | 14:07:27 어댑터 연결, 배터리 Charging 99%
+14:08:29 ac=1 bat=Charging/99% load=0.50 heavy=[] | 14:08:27 어댑터 연결, 배터리 Charging 99%
+14:09:29 ac=1 bat=Charging/99% load=0.21 heavy=[] | 14:09:28 어댑터 연결, 배터리 Charging 99%
+14:10:29 ac=1 bat=Charging/99% load=0.08 heavy=[] | 14:10:28 어댑터 연결, 배터리 Charging 99%
+14:11:29 ac=1 bat=Not charging/100% load=0.07 heavy=[] | 14:11:18 전원 연결/Not charging 부하 0.08 무거운 프로세스 [] 연속 2
+14:12:30 ac=1 bat=Not charging/100% load=9.99 heavy=[] | == imp-all: 조건 10개 × IPC [pipe mq shm] × 반복 30
+14:13:30 ac=1 bat=Not charging/100% load=21.72 heavy=[] | 반복 1/30 끝 (imp-all): 실행 30번, 실패 0번, 90초
+14:14:30 ac=1 bat=Not charging/100% load=17.22 heavy=[] | 반복 1/30 끝 (imp-all): 실행 30번, 실패 0번, 90초
+14:15:30 ac=1 bat=Not charging/100% load=23.76 heavy=[] | 반복 2/30 끝 (imp-all): 실행 60번, 실패 0번, 178초
+14:16:30 ac=1 bat=Not charging/100% load=22.21 heavy=[] | 반복 3/30 끝 (imp-all): 실행 90번, 실패 0번, 267초
+14:17:30 ac=1 bat=Not charging/100% load=19.08 heavy=[] | 반복 3/30 끝 (imp-all): 실행 90번, 실패 0번, 267초
+14:18:30 ac=1 bat=Not charging/100% load=26.30 heavy=[] | 반복 4/30 끝 (imp-all): 실행 120번, 실패 0번, 356초
+14:19:31 ac=1 bat=Not charging/100% load=21.15 heavy=[] | 반복 5/30 끝 (imp-all): 실행 150번, 실패 0번, 446초
+14:20:31 ac=1 bat=Not charging/100% load=15.66 heavy=[] | 반복 5/30 끝 (imp-all): 실행 150번, 실패 0번, 446초
+14:21:31 ac=1 bat=Not charging/100% load=16.45 heavy=[] | 반복 6/30 끝 (imp-all): 실행 180번, 실패 0번, 536초
+14:22:31 ac=1 bat=Not charging/100% load=39.88 heavy=[] | 반복 7/30 끝 (imp-all): 실행 210번, 실패 0번, 626초
+14:23:31 ac=1 bat=Not charging/100% load=27.96 heavy=[] | 반복 7/30 끝 (imp-all): 실행 210번, 실패 0번, 626초
+14:24:31 ac=1 bat=Not charging/100% load=21.00 heavy=[] | 반복 8/30 끝 (imp-all): 실행 240번, 실패 0번, 716초
+14:25:32 ac=1 bat=Not charging/100% load=17.83 heavy=[] | 반복 9/30 끝 (imp-all): 실행 270번, 실패 0번, 805초
+14:26:32 ac=1 bat=Not charging/100% load=20.50 heavy=[] | 반복 9/30 끝 (imp-all): 실행 270번, 실패 0번, 805초
+14:27:32 ac=1 bat=Not charging/100% load=18.34 heavy=[] | 반복 10/30 끝 (imp-all): 실행 300번, 실패 0번, 911초
+14:28:32 ac=1 bat=Not charging/100% load=20.63 heavy=[] | 반복 11/30 끝 (imp-all): 실행 330번, 실패 0번, 1002초
+14:29:32 ac=1 bat=Not charging/100% load=18.96 heavy=[] | 반복 11/30 끝 (imp-all): 실행 330번, 실패 0번, 1002초
+14:30:32 ac=1 bat=Not charging/100% load=11.67 heavy=[] | 반복 12/30 끝 (imp-all): 실행 360번, 실패 0번, 1092초
+14:31:32 ac=1 bat=Not charging/100% load=28.69 heavy=[] | 반복 13/30 끝 (imp-all): 실행 390번, 실패 0번, 1183초
+14:32:32 ac=1 bat=Not charging/100% load=19.78 heavy=[] | 반복 13/30 끝 (imp-all): 실행 390번, 실패 0번, 1183초
+14:33:33 ac=1 bat=Not charging/100% load=13.94 heavy=[] | 반복 14/30 끝 (imp-all): 실행 420번, 실패 0번, 1273초
+14:34:33 ac=1 bat=Not charging/100% load=15.17 heavy=[] | 반복 15/30 끝 (imp-all): 실행 450번, 실패 0번, 1363초
+14:35:33 ac=1 bat=Not charging/100% load=15.59 heavy=[] | 반복 15/30 끝 (imp-all): 실행 450번, 실패 0번, 1363초
+14:36:33 ac=1 bat=Not charging/100% load=12.17 heavy=[] | 반복 16/30 끝 (imp-all): 실행 480번, 실패 0번, 1454초
+14:37:33 ac=1 bat=Not charging/100% load=12.46 heavy=[] | 반복 16/30 끝 (imp-all): 실행 480번, 실패 0번, 1454초
+14:38:33 ac=1 bat=Not charging/100% load=22.15 heavy=[] | 반복 17/30 끝 (imp-all): 실행 510번, 실패 0번, 1560초
+14:39:34 ac=1 bat=Not charging/100% load=12.01 heavy=[] | 반복 18/30 끝 (imp-all): 실행 540번, 실패 0번, 1651초
+14:40:34 ac=1 bat=Not charging/100% load=17.81 heavy=[] | 반복 18/30 끝 (imp-all): 실행 540번, 실패 0번, 1651초
+14:41:34 ac=1 bat=Not charging/100% load=24.58 heavy=[] | 반복 19/30 끝 (imp-all): 실행 570번, 실패 0번, 1740초
+14:42:34 ac=1 bat=Not charging/100% load=14.76 heavy=[] | 반복 20/30 끝 (imp-all): 실행 600번, 실패 0번, 1846초
+14:43:34 ac=1 bat=Not charging/100% load=14.23 heavy=[] | 반복 20/30 끝 (imp-all): 실행 600번, 실패 0번, 1846초
+14:44:35 ac=1 bat=Not charging/100% load=32.99 heavy=[] | 반복 21/30 끝 (imp-all): 실행 630번, 실패 0번, 1935초
+14:45:35 ac=1 bat=Not charging/100% load=23.06 heavy=[] | 반복 21/30 끝 (imp-all): 실행 630번, 실패 0번, 1935초
+14:46:35 ac=1 bat=Not charging/100% load=26.74 heavy=[] | 반복 22/30 끝 (imp-all): 실행 660번, 실패 0번, 2041초
+14:47:35 ac=1 bat=Not charging/100% load=21.89 heavy=[] | 반복 23/30 끝 (imp-all): 실행 690번, 실패 0번, 2132초
+14:48:35 ac=1 bat=Not charging/100% load=22.80 heavy=[] | 반복 23/30 끝 (imp-all): 실행 690번, 실패 0번, 2132초
+14:49:35 ac=1 bat=Not charging/100% load=20.69 heavy=[] | 반복 24/30 끝 (imp-all): 실행 720번, 실패 0번, 2222초
+14:50:36 ac=1 bat=Not charging/100% load=38.45 heavy=[] | 반복 25/30 끝 (imp-all): 실행 750번, 실패 0번, 2312초
+14:51:36 ac=1 bat=Not charging/100% load=25.32 heavy=[] | 반복 25/30 끝 (imp-all): 실행 750번, 실패 0번, 2312초
+14:52:36 ac=1 bat=Not charging/100% load=17.97 heavy=[] | 반복 26/30 끝 (imp-all): 실행 780번, 실패 0번, 2419초
+14:53:36 ac=1 bat=Not charging/100% load=16.44 heavy=[] | 반복 27/30 끝 (imp-all): 실행 810번, 실패 0번, 2510초
+14:54:36 ac=1 bat=Not charging/100% load=16.75 heavy=[] | 반복 27/30 끝 (imp-all): 실행 810번, 실패 0번, 2510초
+14:55:36 ac=1 bat=Not charging/100% load=12.82 heavy=[] | 반복 28/30 끝 (imp-all): 실행 840번, 실패 0번, 2600초
+14:56:36 ac=1 bat=Not charging/100% load=10.94 heavy=[] | 반복 29/30 끝 (imp-all): 실행 870번, 실패 0번, 2690초
+14:57:36 ac=1 bat=Not charging/100% load=21.68 heavy=[] | 반복 29/30 끝 (imp-all): 실행 870번, 실패 0번, 2690초
+14:58:37 ac=1 bat=Not charging/100% load=14.76 heavy=[] | == target-all: 조건 2개 × IPC [pipe mq shm] × 반복 30
+14:59:37 ac=1 bat=Not charging/100% load=37.05 heavy=[] | 반복 1/30 끝 (target-all): 실행 906번, 실패 0번, 2839초
+15:00:37 ac=1 bat=Not charging/100% load=28.73 heavy=[] | 반복 3/30 끝 (target-all): 실행 918번, 실패 0번, 2926초
+15:01:37 ac=1 bat=Not charging/100% load=15.91 heavy=[] | 반복 4/30 끝 (target-all): 실행 924번, 실패 0번, 2969초
+15:02:37 ac=1 bat=Not charging/100% load=11.28 heavy=[] | 반복 5/30 끝 (target-all): 실행 930번, 실패 0번, 3010초
+15:03:38 ac=1 bat=Not charging/100% load=10.82 heavy=[] | 반복 7/30 끝 (target-all): 실행 942번, 실패 0번, 3109초
+15:04:38 ac=1 bat=Not charging/100% load=8.64 heavy=[] | 반복 8/30 끝 (target-all): 실행 948번, 실패 0번, 3152초
+15:05:38 ac=1 bat=Not charging/100% load=42.97 heavy=[] | 반복 10/30 끝 (target-all): 실행 960번, 실패 0번, 3236초
+15:06:38 ac=1 bat=Not charging/100% load=20.57 heavy=[] | 반복 11/30 끝 (target-all): 실행 966번, 실패 0번, 3294초
+15:07:39 ac=1 bat=Not charging/100% load=14.15 heavy=[] | 반복 12/30 끝 (target-all): 실행 972번, 실패 0번, 3337초
+15:08:39 ac=1 bat=Not charging/100% load=38.15 heavy=[] | 반복 13/30 끝 (target-all): 실행 978번, 실패 0번, 3381초
+15:09:39 ac=1 bat=Not charging/100% load=42.91 heavy=[] | 반복 14/30 끝 (target-all): 실행 984번, 실패 0번, 3440초
+15:10:39 ac=1 bat=Not charging/100% load=20.65 heavy=[] | 반복 16/30 끝 (target-all): 실행 996번, 실패 0번, 3524초
+15:11:40 ac=1 bat=Not charging/100% load=43.19 heavy=[] | 반복 17/30 끝 (target-all): 실행 1002번, 실패 0번, 3566초
+15:12:40 ac=1 bat=Not charging/100% load=20.91 heavy=[] | 반복 18/30 끝 (target-all): 실행 1008번, 실패 0번, 3606초
+15:13:40 ac=1 bat=Not charging/100% load=12.04 heavy=[] | 반복 20/30 끝 (target-all): 실행 1020번, 실패 0번, 3708초
+15:14:40 ac=1 bat=Not charging/100% load=11.81 heavy=[] | 반복 21/30 끝 (target-all): 실행 1026번, 실패 0번, 3767초
+15:15:41 ac=1 bat=Not charging/100% load=8.45 heavy=[] | 반복 22/30 끝 (target-all): 실행 1032번, 실패 0번, 3824초
+15:16:41 ac=1 bat=Not charging/100% load=20.65 heavy=[] | 반복 23/30 끝 (target-all): 실행 1038번, 실패 0번, 3882초
+15:17:41 ac=1 bat=Not charging/100% load=11.49 heavy=[] | 반복 24/30 끝 (target-all): 실행 1044번, 실패 0번, 3923초
+15:18:41 ac=1 bat=Not charging/100% load=16.81 heavy=[] | 반복 26/30 끝 (target-all): 실행 1056번, 실패 0번, 4005초
+15:19:42 ac=1 bat=Not charging/100% load=12.78 heavy=[] | 반복 27/30 끝 (target-all): 실행 1062번, 실패 0번, 4065초
+15:20:42 ac=1 bat=Not charging/100% load=45.25 heavy=[] | 반복 28/30 끝 (target-all): 실행 1068번, 실패 0번, 4106초
+15:21:42 ac=1 bat=Not charging/100% load=20.60 heavy=[] | 반복 29/30 끝 (target-all): 실행 1074번, 실패 0번, 4148초
+15:22:42 ac=1 bat=Not charging/100% load=9.32 heavy=[] | 반복 9/30 끝 (cause-scan): 실행 1116번, 실패 0번, 4259초
+15:23:42 ac=1 bat=Not charging/100% load=5.51 heavy=[] | 반복 20/30 끝 (cause-scan): 실행 1160번, 실패 0번, 4320초
+측정 끝
