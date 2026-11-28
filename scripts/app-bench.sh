@@ -18,14 +18,12 @@
 #   cause-mix                     원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 요청 종류만 DRAW만 / SNAPSHOT만으로 바꾼다
 #   cause-ring                    원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 shm 응답 링 칸 수만 34·68·136 으로 바꾼다
 #                                 (넷 다 기본 목록에 없다. EXPS="cause-workers cause-lockw cause-mix cause-ring" 로 따로 돌린다)
-#   target-ph, imp-target-ph      목표 부하를 클라이언트마다 위상을 흩어 다시 잰다(11/28 추가). target·imp-target 은 처음처럼
-#                                 위상을 맞춘다(클라이언트 -A). 위상을 맞추면 도착이 주기마다 몰리고 그 모양이 IPC마다 달랐다
 #   cause-pipe                    원인 확인(pipe, 11/28 추가): 요청 받기 방식(OSP_PIPE_RBUF)과 응답 FIFO 용량(OSP_PIPE_RESP_SZ)만 바꾼다
 #   imp-all                       개선 전후(11/28 추가): 세 IPC 를 같은 조건 목록으로, 처음 설계와 개선(IMP_ENV)을 한 반복 안에서
-#                                 번갈아 잰다(짝수 반복은 조건 순서를 거꾸로). 클라이언트 1·64·256·1024 와 처리량(thr) 조건
-#   part-pipe                     pipe 개선의 부분별 효과(11/28 추가): 응답 FIFO 키우기(OSP_PIPE_GROW)만 / 송신 스레드(OSP_PIPE_ASYNC)만,
-#                                 클라이언트 64·256·1024 (둘 다 켠 것과 처음 설계는 imp-all 에 있다)
-#                                 (다섯 다 기본 목록에 없다. EXPS="imp-all target-ph imp-target-ph part-pipe", cause-pipe 는 따로)
+#                                 번갈아 잰다. 클라이언트 1·64·256·1024 와 처리량(thr) 조건
+#   target-all                    목표 부하의 개선 전후(11/28 추가): 처음 설계와 개선을 한 반복 안에서 번갈아 잰다. 보내는 위상은
+#                                 클라이언트 번호로 흩는다(target·imp-target 은 처음처럼 위상을 맞춘다, 클라이언트 -A)
+#                                 (셋 다 기본 목록에 없다. EXPS="imp-all target-all cause-scan", cause-pipe 는 따로)
 #   cause-scan                    개선의 대가 원인 확인(shm, 11/28 추가): thr 조건에서 요청 링 방식(공용 / 클라이언트별)과
 #                                 서버가 받을 클라이언트 수(-N 1024 / 16)만 바꾼다. 클라이언트별 링은 받을 때 -N 개 링을 훑는다
 #                                 (기본 목록에 없다. EXPS="cause-scan" 로 따로 돌린다. -N 은 CSV 의 env 열에 "-N=값"으로 남긴다)
@@ -47,7 +45,7 @@ if [ -n "$(git status --porcelain -- src include Makefile 2>/dev/null)" ] && [ -
 fi
 
 # 전원. 노트북은 배터리로 돌면 CPU 전력 한도가 낮아져 처리량이 절반 아래로 떨어진다(11/28 13:07 측정 중에 어댑터가 빠져 겪었다).
-# 어댑터(Mains)가 연결되어 있을 때만 재고, 측정 중에 빠지면 그 자리에서 멈춘다. 어댑터가 없는 컴퓨터(데스크톱, CI)는 연결된 것으로 본다
+# 어댑터(Mains)가 연결되고 배터리가 완충일 때만 재고, 측정 중에 바뀌면 그 자리에서 멈춘다. 어댑터가 없는 컴퓨터(데스크톱, CI)는 연결된 것으로 본다
 ac_online() {
     local p found=0
     for p in /sys/class/power_supply/*; do
@@ -56,6 +54,16 @@ ac_online() {
         [ "$(cat "$p/online" 2>/dev/null)" = 1 ] && return 0
     done
     [ $found -eq 0 ]
+}
+# 어댑터가 연결되어 있고 배터리가 충전 중이 아니다(완충). 충전 중에는 전력·발열이 달라 그 상태로는 재지 않는다
+power_ok() {
+    ac_online || return 1
+    local p
+    for p in /sys/class/power_supply/*; do
+        [ "$(cat "$p/type" 2>/dev/null)" = Battery ] || continue
+        case $(cat "$p/status" 2>/dev/null) in Charging|Discharging) return 1 ;; esac
+    done
+    return 0
 }
 power_desc() {
     local p out=""
@@ -67,8 +75,8 @@ power_desc() {
     done
     echo "${out# }"
 }
-if ! ac_online && [ -z "${ALLOW_BATTERY:-}" ]; then
-    echo "전원 어댑터가 연결되어 있지 않다($(power_desc)). 연결한 뒤 잰다 (시험 삼아 돌릴 때는 ALLOW_BATTERY=1)" >&2
+if ! power_ok && [ -z "${ALLOW_BATTERY:-}" ]; then
+    echo "전원 어댑터 연결 + 완충 상태가 아니다($(power_desc)). 그 상태에서 잰다 (시험 삼아 돌릴 때는 ALLOW_BATTERY=1)" >&2
     exit 1
 fi
 export BENCH_COMMIT=${BENCH_COMMIT:-$(git rev-parse --short HEAD)}
@@ -94,8 +102,7 @@ conds_for() {
     imp-scale)   echo "-K 8|1024|-m 90 -f 1|3|"
                  for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done ;;
     imp-target)  echo "-K 8|1024|-H 67 -f 4 -A|3|$IMP_ENV" ;;
-    target-ph)     echo "-K 8|1024|-H 67 -f 4|3|" ;;
-    imp-target-ph) echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
+    target-all)    echo "-K 8|1024|-H 67 -f 4|3|"; echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
     cause-pipe)    for e in "" OSP_PIPE_RBUF=1 OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-f 16|1|$e"; done
                    for e in "" OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-m 0 -f 16|1|$e"; done
                    for e in "" OSP_PIPE_RBUF=1; do echo "-K 1|1|-m 100 -f 16|1|$e"; done
@@ -103,8 +110,6 @@ conds_for() {
     imp-all)       for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3
                        echo "-K 8|$n|-m 90 -f 1|$d|"; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done
                    echo "-K 1|1|-f 16|1|"; echo "-K 1|1|-f 16|1|$IMP_ENV" ;;
-    part-pipe)     for n in 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3
-                       for e in OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1; do echo "-K 8|$n|-m 90 -f 1|$d|$e"; done; done ;;
     mem-shm)     for f in 1 4; do for c in 34 17; do echo "-K 8|1024|-m 90 -f $f|3|OSP_SHM_REQ=per OSP_SHM_RESP_CHUNKS=$c"; done; done ;;
     cause-workers) for wk in 1 2 4 8; do echo "-K 1 -w $wk|1|-f 16|1|"; done ;;
     cause-lockw)   for wk in 1 4 16; do echo "-K 1 -l room -w $wk|64|-f 1|2|"; done ;;
@@ -125,7 +130,7 @@ ipcs_for() {
     imp-mq-q|imp-mq-req)  echo "mq" ;;
     imp-scale|imp-target) echo "mq shm" ;;
     mem-shm|cause-ring|cause-scan) echo "shm" ;;
-    cause-pipe|part-pipe) echo "pipe" ;;
+    cause-pipe)           echo "pipe" ;;
     *)                    echo "$IPCS" ;;
     esac
 }
@@ -164,8 +169,8 @@ fails=0; runs=0
 run_one() {
     local exp=$1 ipc=$2 rep=$3 sopts=$4 n=$5 copts=$6 dur=$7 senv=$8
     local rooms lock workers tile warm maxc note
-    if ! ac_online && [ -z "${ALLOW_BATTERY:-}" ]; then
-        echo "  중단: 측정 중에 전원 어댑터가 빠졌다($exp 반복 $rep, $(date +%T), $(power_desc)). 이 측정의 원자료는 쓰지 않는다"
+    if ! power_ok && [ -z "${ALLOW_BATTERY:-}" ]; then
+        echo "  중단: 측정 중에 전원 상태가 바뀌었다($exp 반복 $rep, $(date +%T), $(power_desc)). 이 측정의 원자료는 쓰지 않는다"
         record_env; exit 3
     fi
     rooms=$(optval -K 8 $sopts); lock=$(optval -l rw $sopts); workers=$(optval -w 4 $sopts); tile=$(optval -t 64 $sopts)
@@ -215,7 +220,8 @@ for exp in $EXPS; do
         read -r -a order <<< "$exp_ipcs"
         k=$(( (rep - 1) % ${#order[@]} )); order=("${order[@]:k}" "${order[@]:0:k}")
         conds=("${CONDS[@]}")
-        if [ "$exp" = imp-all ] && (( rep % 2 == 0 )); then        # 짝수 반복은 조건 순서를 거꾸로 (순서의 영향을 상쇄)
+        # 전후·원인을 번갈아 재는 실험은 짝수 반복에서 조건 순서를 거꾸로 (순서의 영향을 상쇄)
+        if [[ " imp-all target-all cause-scan " == *" $exp "* ]] && (( rep % 2 == 0 )); then
             conds=(); for ((ci = ${#CONDS[@]} - 1; ci >= 0; ci--)); do conds+=("${CONDS[ci]}"); done
         fi
         for c in "${conds[@]}"; do
