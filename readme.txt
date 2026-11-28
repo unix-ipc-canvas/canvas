@@ -34,19 +34,23 @@ System V key 는 60020 ~ 60029(60xxy, 팀 번호 02), FIFO 는 /tmp/osproject_2_
    (5) 설계 개선 모드 (서버에만 환경 변수, 기본값은 처음 설계)
        OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 ./bin/server_mq     mq 응답 큐 8개 + 요청 큐 입장 제한
        OSP_SHM_REQ=per ./bin/server_shm                   shm 클라이언트별 요청 링
-       OSP_PIPE_RESP=1 ./bin/server_pipe -N 64            pipe 응답 FIFO 용량 키우기 (-N = 받을 클라이언트 수)
+       OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1 ./bin/server_pipe pipe 응답 FIFO 키우기 + 송신 스레드
 
 4. 측정 재현 (측정용 컴퓨터 한 대에서, 다른 무거운 작업을 멈추고)
    scripts/bench.sh                          1단계 측정 -> results/bench_*.csv
    python3 scripts/plot-bench.py results/stage1-r20 docs/assets/bench/stage1-r20
+   EXPS="clients" scripts/exp-stage1.sh      1단계 보강: 클라이언트 1~1024, 반복 30 (약 40분) -> results/exp-clients/
+   python3 scripts/plot-clients.py           1단계 보강 그래프와 요약표 -> docs/assets/bench/exp-clients/
    scripts/app-bench.sh                      2단계 측정(실험 11개, 조건마다 30번, 약 3시간) -> results/app/<실험>.csv
    REPS=2 EXPS="scale" OUT=/tmp/x scripts/app-bench.sh     일부만 짧게
    python3 scripts/plot-app.py               2단계 요약표와 그래프 -> docs/assets/app/
    scripts/race-start.sh -n 150 -l 12        시작 구간 경쟁 재현 실험
    EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh
                                              본 측정 뒤에 추가한 원인 확인 실험 4개 (약 30분)
-   EXPS="target-ph imp-target-ph cause-pipe imp-pipe" scripts/app-bench.sh
-                                             위상을 흩은 목표 부하, pipe 원인 확인·개선 (약 1시간)
+   EXPS="cause-pipe" scripts/app-bench.sh    pipe 원인 확인 (약 7분)
+   EXPS="imp-all target-all cause-scan" scripts/app-bench.sh
+                                             세 IPC 개선 전후, 목표 부하 전후, shm 링 훑기 확인 (약 1시간 15분)
    scripts/syscall-count.sh 20000 -m 90 -f 16   요청 하나당 시스템 콜 수 (strace -c)
    scripts/demo-check.sh 1024 3 [그림판 수]   세 버전 x 클라이언트 1024개: 체크섬과 남은 자원 확인
+   측정은 전원 어댑터를 연결하고 배터리가 완충일 때만 시작한다(bench.sh, app-bench.sh 가 확인).
    측정 원자료는 results/ 에 있다 (1단계: bench_*.csv, stage1-r20/, exp-*/ / 2단계: app/, 측정 화면 기록 run-*.log, 감시 기록 monitor-*.log).
