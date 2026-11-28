@@ -18,12 +18,19 @@
  *   받기 버퍼: 처음 설계는 메시지마다 머리와 본문을 따로 read 한다(메시지 하나에 read 2번). 켜면 서버 수신 스레드와
  *   클라이언트 수신 스레드가 FIFO 에 쌓인 바이트를 한 번에 읽어(최대 RBUF_CAP) 사용자 버퍼에서 메시지를 꺼낸다.
  *   서버가 잠금 파일에 설정을 적고 클라이언트가 읽어 따른다(transport_mq.c 와 같은 방식).
- * 설계 개선 (서버 환경 변수 OSP_PIPE_RESP=1)
- *   응답 FIFO 용량: 처음 설계의 응답 FIFO 는 기본 64KB(65,536B)라 가장 큰 응답(SNAPSHOT 65,592B)이 56B 넘친다.
- *   그래서 64KB 응답마다 워커가 FIFO 에서 잠들고 클라이언트가 비워 줄 때까지 기다린다. 켜면 서버가 응답 FIFO 를
- *   F_SETPIPE_SZ 로 키운다. 크기는 사용자별 파이프 버퍼 한도(pipe-user-pages-soft)를 서버가 받을 클라이언트 수(-N)로
- *   나눈 몫 안에서 정하고, 몫이 응답 하나보다 작으면(클라이언트 1024개) 키우지 않는다.
- *   OSP_PIPE_RESP_SZ=<바이트> 는 원인 확인 실험용으로 크기를 그대로 준다.
+ * 원인 확인 실험용 (서버 환경 변수 OSP_PIPE_RESP_SZ=<바이트>)
+ *   응답 FIFO 를 F_SETPIPE_SZ 로 그 크기로 키운다. 처음 설계의 응답 FIFO 는 기본 64KB(65,536B)라 가장 큰 응답
+ *   (SNAPSHOT 65,592B)이 56B 넘치고, 그러면 워커가 FIFO 에서 잠들어 클라이언트가 비워 줄 때까지 기다린다.
+ *   사용자별 파이프 버퍼 한도(pipe-user-pages-soft, 기본 64MB)를 넘으면 커널이 거부하므로 설계 개선으로는 쓰지 않는다
+ *   (클라이언트 1024개면 처음 설계도 이 한도를 다 써서 마지막 150개쯤의 FIFO 가 8KB 로 만들어진다).
+ * 설계 개선: 워커가 응답 FIFO 에서 클라이언트를 기다리지 않게 한다. 두 부분이고 서버 환경 변수로 따로 켠다.
+ *   OSP_PIPE_GROW=1  응답 FIFO 키우기: 큰 응답(32KB 초과)을 보낼 때 그 클라이언트의 FIFO 를 128KB 로 키운다
+ *                    (클라이언트당 160KB 이하, 요구사항 N-5). 사용자별 한도를 새 클라이언트의 FIFO 몫으로 남기려고
+ *                    붙어 있는 클라이언트가 한도의 3/4 ÷ 128KB(기본 384개) 이하이고 0.1초 동안 새로 붙지 않았을 때만
+ *                    키우고, 그보다 많이 붙으면 키운 FIFO 를 그 클라이언트에게 다음에 보낼 때 64KB 로 되돌린다.
+ *   OSP_PIPE_ASYNC=1 송신 스레드: 워커는 응답 FIFO 에 막히지 않게(O_NONBLOCK) 쓰고, 자리가 없어 못 쓴 나머지는
+ *                    클라이언트별 자리(PEND_CAP)에 옮겨 두고 바로 다음 요청으로 간다. 송신 스레드가 epoll 로 FIFO 에
+ *                    자리가 나기를 기다렸다가 나머지를 쓴다. 나머지가 있는 동안 온 응답은 순서를 지키려고 그 뒤에 붙인다.
  */
 #define _GNU_SOURCE             /* F_GETPIPE_SZ */
 #include <errno.h>
@@ -37,10 +44,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <time.h>
 #include <unistd.h>
 #include <limits.h>
 #include <sys/resource.h>
@@ -355,8 +366,42 @@ static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static int srv_opened;
 static uint32_t lim_clients = 16;                /* tp_set_limits. 부르지 않으면 1단계 값 */
-static size_t lim_resp;                          /* tp_set_limits 의 가장 큰 응답(머리 포함). 0 이면 모름 */
-static int srv_resp_sz;                          /* 응답 FIFO 를 키울 크기. 0 이면 그대로 (설계 개선) */
+static int srv_resp_sz;                          /* 응답 FIFO 를 키울 크기. 0 이면 그대로 (원인 확인 실험) */
+
+/* 설계 개선 (OSP_PIPE_GROW=1): 응답 FIFO 키우기 */
+#define GROW_SZ      131072                      /* 가장 큰 응답(65,592B)이 통째로 들어가는 2의 거듭제곱 */
+#define GROW_MIN     32768u                      /* 이보다 큰 응답을 보낼 때만 키운다 (SNAPSHOT) */
+#define GROW_HOLD_NS 100000000ll                 /* 접속이 0.1초 동안 늘지 않았을 때만 키운다 (몰려 붙는 동안은 아니다) */
+static bool srv_grow;
+static int srv_grow_max;                         /* 붙어 있는 클라이언트가 이만큼 이하일 때만 키운다 */
+static atomic_int srv_nopen;                     /* 서버가 연 응답 FIFO 수 = 붙어 있는 클라이언트 수 */
+static _Atomic long long srv_open_ns;            /* 마지막으로 응답 FIFO 를 연 시각 (CLOCK_MONOTONIC) */
+static bool srv_grown[MAX_CLIENTS];              /* srv_resp_mtx[id] 로 지킨다 */
+
+/*
+ * 설계 개선 (OSP_PIPE_ASYNC=1): 워커가 다 못 쓴 응답의 나머지.
+ * 클라이언트마다 PEND_CAP 바이트 자리를 서버를 처음 열 때 mmap 으로 한 번 잡는다(측정 중 malloc 없음, 쓴 쪽만 RSS).
+ * 응답 FIFO 64KB 와 합쳐 클라이언트당 160KB 다(요구사항 N-5). 가장 큰 응답(65,592B)이 들어가고 남는다.
+ * 모든 칸은 srv_resp_mtx[id] 로 지킨다.
+ */
+#define PEND_CAP  98304u
+#define EV_WAKE   UINT32_MAX                     /* epoll 의 data: 송신 스레드 깨우기(eventfd) */
+typedef struct {
+    uint32_t off, len;           /* 아직 못 쓴 바이트 = pend_buf(id)[off, off + len) */
+    uint32_t gen;                /* 응답 FIFO 를 닫을 때마다 1 증가. 자리를 기다리던 워커가 세션이 바뀐 것을 안다 */
+    bool armed;                  /* 송신 스레드의 epoll 에 EPOLLOUT(한 번)으로 걸려 있다 */
+    bool reg;                    /* 지금 fd 가 epoll 에 등록돼 있다 */
+} pend_t;
+static bool srv_async;
+static char *srv_pend_mem;                       /* MAX_CLIENTS × PEND_CAP. 프로세스가 끝날 때까지 둔다 */
+static pend_t srv_pend[MAX_CLIENTS];
+static pthread_cond_t srv_pend_cv[MAX_CLIENTS];  /* 나머지가 줄거나 FIFO 가 닫히면 깨운다 */
+static pthread_once_t srv_pend_once = PTHREAD_ONCE_INIT;
+static atomic_int srv_pend_n;                    /* 나머지가 남은 클라이언트 수 (닫기 전에 비울 때 본다) */
+static int srv_ep = -1, srv_evfd = -1;
+static pthread_t srv_sender;
+static bool srv_sender_on;
+static atomic_bool srv_sender_stop;
 
 /*
  * 클라이언트 수만 쓴다. 서버는 응답 FIFO 를 클라이언트마다 하나씩 열어 두므로, 열린 파일 한도(터미널 기본 soft 1024)가
@@ -370,8 +415,22 @@ int tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp)
         return -1;
     }
     lim_clients = max_clients;
-    lim_resp = max_resp;
+    (void)max_resp;
     return 0;
+}
+
+/* 원인 확인 실험: 응답 FIFO 를 키울 크기 (OSP_PIPE_RESP_SZ). 없으면 0 = 그대로 */
+static int pick_resp_size(void)
+{
+    const char *fixed = getenv("OSP_PIPE_RESP_SZ");
+    return fixed && atoi(fixed) > 0 ? atoi(fixed) : 0;
+}
+
+static long long mono_ns(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (long long)t.tv_sec * 1000000000ll + t.tv_nsec;
 }
 
 static long read_proc_long(const char *path)
@@ -385,26 +444,180 @@ static long read_proc_long(const char *path)
     return v;
 }
 
-/*
- * 응답 FIFO 를 키울 크기 (설계 개선, 서버를 열 때 한 번 정한다).
- * 사용자별 파이프 버퍼 한도를 넘으면 새 FIFO 가 8KB 로 만들어지고 F_SETPIPE_SZ 도 거부된다(클라이언트 1024개의 처음 설계).
- * 그래서 한도의 7/8 을 서버가 받을 클라이언트 수로 나눈 몫 안에서 2의 거듭제곱으로 고른다(최대 pipe-max-size).
- * 나머지 1/8 은 요청 FIFO 와 이 사용자의 다른 파이프 몫이다. 몫이 가장 큰 응답 하나보다 작으면 키우지 않는다(0).
- */
-static int pick_resp_size(void)
+/* 설계 개선(OSP_PIPE_GROW=1)을 켤 때: 키워도 되는 클라이언트 수 = 사용자별 한도의 3/4 ÷ 128KB. 못 키우면 0 */
+static int grow_limit(void)
 {
-    const char *fixed = getenv("OSP_PIPE_RESP_SZ");             /* 원인 확인 실험: 크기를 그대로 */
-    if (fixed && atoi(fixed) > 0) return atoi(fixed);
-    const char *on = getenv("OSP_PIPE_RESP");
-    if (!on || atoi(on) != 1) return 0;
     long page = sysconf(_SC_PAGESIZE);
-    long soft = read_proc_long("/proc/sys/fs/pipe-user-pages-soft");   /* 0 = 한도 없음 */
+    long soft = read_proc_long("/proc/sys/fs/pipe-user-pages-soft");    /* 쪽 수. 0 = 한도 없음 */
     long maxsz = read_proc_long("/proc/sys/fs/pipe-max-size");
-    if (page <= 0 || soft < 0 || maxsz <= 0) return 0;
-    long share = soft > 0 ? soft * page / 8 * 7 / (long)lim_clients : maxsz;
-    long sz = page;
-    while (sz * 2 <= share && sz * 2 <= maxsz) sz *= 2;
-    return sz >= (long)lim_resp && sz > 65536 ? (int)sz : 0;
+    if (page <= 0 || soft < 0 || maxsz < GROW_SZ) return 0;
+    if (soft == 0) return (int)MAX_CLIENTS;
+    long n = soft / 4 * 3 / (GROW_SZ / page);
+    return n > (long)MAX_CLIENTS ? (int)MAX_CLIENTS : (int)n;
+}
+
+/*
+ * 보내기 직전에 응답 FIFO 크기를 맞춘다(OSP_PIPE_GROW=1). srv_resp_mtx[id] 를 잡고 부른다.
+ * 큰 응답이고 붙은 클라이언트가 적고 접속이 잠잠하면 128KB 로 키운다. 커널이 한도로 거부하면(EPERM) 그대로 쓴다.
+ * 키운 뒤에 클라이언트가 많아지면 64KB 로 되돌린다(FIFO 에 64KB 넘게 차 있으면 EBUSY, 다음에 다시 해 본다).
+ */
+static void fit_resp_locked(uint32_t id, size_t total)
+{
+    int fd = srv_resp_fd[id];
+    int n = atomic_load(&srv_nopen);
+    if (srv_grown[id]) {
+        if (n > srv_grow_max && fcntl(fd, F_SETPIPE_SZ, 65536) >= 0) srv_grown[id] = false;
+        return;
+    }
+    if (total <= GROW_MIN || n > srv_grow_max || mono_ns() - atomic_load(&srv_open_ns) < GROW_HOLD_NS) return;
+    if (fcntl(fd, F_SETPIPE_SZ, GROW_SZ) >= 0) srv_grown[id] = true;
+}
+
+/* ---- 설계 개선: 송신 스레드 (OSP_PIPE_ASYNC=1) ---- */
+
+static char *pend_buf(uint32_t id) { return srv_pend_mem + (size_t)id * PEND_CAP; }
+
+static void pend_init_once(void)
+{
+    pthread_condattr_t a;
+    pthread_condattr_init(&a);
+    pthread_condattr_setclock(&a, CLOCK_MONOTONIC);
+    for (uint32_t i = 0; i < MAX_CLIENTS; i++) pthread_cond_init(&srv_pend_cv[i], &a);
+    pthread_condattr_destroy(&a);
+}
+
+/* id 의 응답 FIFO 에 자리가 나면 송신 스레드가 깨게 건다(EPOLLOUT, 한 번). srv_resp_mtx[id] 를 잡고 부른다 */
+static void pend_arm(uint32_t id)
+{
+    pend_t *p = &srv_pend[id];
+    if (p->armed || srv_resp_fd[id] < 0) return;
+    struct epoll_event ev = { .events = EPOLLOUT | EPOLLONESHOT, .data.u32 = id };
+    if (epoll_ctl(srv_ep, p->reg ? EPOLL_CTL_MOD : EPOLL_CTL_ADD, srv_resp_fd[id], &ev) == 0) {
+        p->reg = true;
+        p->armed = true;
+    }
+}
+
+/* 나머지를 버리고 epoll 에서 뺀다. FIFO 를 닫기 전에 부른다. 자리를 기다리던 워커를 깨운다 */
+static void pend_clear_locked(uint32_t id)
+{
+    pend_t *p = &srv_pend[id];
+    if (p->reg && srv_resp_fd[id] >= 0) epoll_ctl(srv_ep, EPOLL_CTL_DEL, srv_resp_fd[id], NULL);
+    if (p->len > 0) atomic_fetch_sub(&srv_pend_n, 1);
+    p->off = p->len = 0;
+    p->reg = p->armed = false;
+    p->gen++;
+    pthread_cond_broadcast(&srv_pend_cv[id]);
+}
+
+/* 메시지(머리 + payload)의 skip 바이트 뒤를 나머지 끝에 붙인다. 자리는 부르는 쪽이 확인했다 */
+static void pend_put(uint32_t id, const msg_hdr_t *hdr, const void *payload, size_t skip)
+{
+    pend_t *p = &srv_pend[id];
+    char *b = pend_buf(id);
+    size_t hl = sizeof *hdr, total = hl + hdr->payload_len, add = total - skip;
+    if (p->off + p->len + add > PEND_CAP) {                 /* 뒤쪽 자리가 모자라면 앞으로 당긴다 */
+        memmove(b, b + p->off, p->len);
+        p->off = 0;
+    }
+    char *dst = b + p->off + p->len;
+    if (skip < hl) {
+        memcpy(dst, (const char *)hdr + skip, hl - skip);
+        dst += hl - skip;
+        skip = hl;
+    }
+    memcpy(dst, (const char *)payload + (skip - hl), total - skip);
+    if (p->len == 0) atomic_fetch_add(&srv_pend_n, 1);
+    p->len += (uint32_t)add;
+}
+
+static void drop_resp_locked(uint32_t id);
+
+/* 송신 스레드: FIFO 에 자리가 난 클라이언트의 나머지를 쓸 수 있는 만큼 쓴다 */
+static void *sender_main(void *arg)
+{
+    (void)arg;
+    struct epoll_event ev[64];
+    while (!atomic_load(&srv_sender_stop)) {
+        int n = epoll_wait(srv_ep, ev, 64, -1);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        for (int i = 0; i < n; i++) {
+            uint32_t id = ev[i].data.u32;
+            if (id == EV_WAKE) {
+                uint64_t x;
+                if (read(srv_evfd, &x, sizeof x) < 0) { /* 이미 비었다 */ }
+                continue;
+            }
+            pthread_mutex_lock(&srv_resp_mtx[id]);
+            pend_t *p = &srv_pend[id];
+            p->armed = false;
+            ssize_t w = 0;
+            while (p->len > 0 && srv_resp_fd[id] >= 0) {
+                w = write(srv_resp_fd[id], pend_buf(id) + p->off, p->len);
+                if (w < 0) {
+                    if (errno == EINTR) continue;
+                    break;
+                }
+                p->off += (uint32_t)w;
+                p->len -= (uint32_t)w;
+                if (p->len == 0) {
+                    p->off = 0;
+                    atomic_fetch_sub(&srv_pend_n, 1);
+                }
+                pthread_cond_broadcast(&srv_pend_cv[id]);
+            }
+            if (w < 0 && errno != EAGAIN) drop_resp_locked(id);  /* EPIPE: 클라이언트가 끝났다. 나머지는 버린다 */
+            else if (p->len > 0) pend_arm(id);
+            pthread_mutex_unlock(&srv_resp_mtx[id]);
+        }
+    }
+    return NULL;
+}
+
+/* 서버를 열 때: 나머지 자리, epoll, 깨우기 eventfd, 송신 스레드 */
+static int async_start(void)
+{
+    pthread_once(&srv_pend_once, pend_init_once);
+    if (!srv_pend_mem) {
+        void *m = mmap(NULL, (size_t)MAX_CLIENTS * PEND_CAP, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (m == MAP_FAILED) return -1;
+        srv_pend_mem = m;
+    }
+    memset(srv_pend, 0, sizeof srv_pend);
+    atomic_store(&srv_pend_n, 0);
+    atomic_store(&srv_sender_stop, false);
+    srv_ep = epoll_create1(EPOLL_CLOEXEC);
+    srv_evfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    struct epoll_event ev = { .events = EPOLLIN, .data.u32 = EV_WAKE };
+    if (srv_ep < 0 || srv_evfd < 0 || epoll_ctl(srv_ep, EPOLL_CTL_ADD, srv_evfd, &ev) < 0) goto fail;
+    if ((errno = pthread_create(&srv_sender, NULL, sender_main, NULL)) != 0) goto fail;
+    srv_sender_on = true;
+    return 0;
+fail:;
+    int e = errno;
+    if (srv_ep >= 0) { close(srv_ep); srv_ep = -1; }
+    if (srv_evfd >= 0) { close(srv_evfd); srv_evfd = -1; }
+    errno = e;
+    return -1;
+}
+
+/* 서버를 닫을 때: 남은 나머지를 잠깐(최대 0.5초) 비우게 두고 송신 스레드를 끝낸다 */
+static void async_stop(void)
+{
+    if (!srv_sender_on) return;
+    for (int i = 0; i < 500 && atomic_load(&srv_pend_n) > 0; i++) {
+        struct timespec ms = { 0, 1000000 };
+        nanosleep(&ms, NULL);
+    }
+    atomic_store(&srv_sender_stop, true);
+    uint64_t one = 1;
+    if (write(srv_evfd, &one, sizeof one) < 0) { /* 카운터가 이미 차 있다 = 이미 깨어 있다 */ }
+    pthread_join(srv_sender, NULL);
+    srv_sender_on = false;
 }
 
 /* 열린 파일 한도를 클라이언트 수 + 여유 64개 이상으로 올린다. hard 한도가 모자라면 그대로 두고 0 (열 때 EMFILE 로 알게 된다) */
@@ -466,6 +679,21 @@ int tp_server_open(void)
         pthread_mutex_init(&srv_resp_mtx[i], NULL);
     }
     atomic_store(&srv_stopping, false);
+
+    /* 설계 개선: 응답 FIFO 키우기, 송신 스레드 */
+    const char *gr = getenv("OSP_PIPE_GROW");
+    srv_grow_max = gr && atoi(gr) == 1 && srv_resp_sz == 0 ? grow_limit() : 0;
+    srv_grow = srv_grow_max > 0;
+    atomic_store(&srv_nopen, 0);
+    atomic_store(&srv_open_ns, mono_ns());
+    memset(srv_grown, 0, sizeof srv_grown);
+    const char *as = getenv("OSP_PIPE_ASYNC");
+    srv_async = as && atoi(as) == 1;
+    if (srv_async && async_start() < 0) {
+        for (uint32_t i = 0; i < MAX_CLIENTS; i++) pthread_mutex_destroy(&srv_resp_mtx[i]);
+        srv_async = false;
+        goto fail;
+    }
     srv_opened = 1;
     return 0;
 
@@ -486,9 +714,12 @@ static int open_resp(uint32_t id);
 /* 클라이언트 id 의 응답 FIFO 쓰기 끝을 닫는다. 호출하는 쪽이 srv_resp_mtx[id] 를 잡고 있어야 한다 */
 static void drop_resp_locked(uint32_t id)
 {
+    if (srv_async) pend_clear_locked(id);           /* 닫기 전에 epoll 에서 빼고 나머지를 버린다 */
     if (srv_resp_fd[id] >= 0) {
         close(srv_resp_fd[id]);
         srv_resp_fd[id] = -1;
+        atomic_fetch_sub(&srv_nopen, 1);
+        srv_grown[id] = false;
     }
 }
 
@@ -534,15 +765,134 @@ static int open_resp(uint32_t id)
         if (errno == ENXIO || errno == ENOENT) errno = EPIPE;
         return -1;
     }
-    if (clear_nonblock(fd) < 0) {
+    /* 송신 스레드(설계 개선)를 쓰면 막히지 않는 쓰기 그대로 둔다 */
+    if (!srv_async && clear_nonblock(fd) < 0) {
         int e = errno;
         close(fd);
         errno = e;
         return -1;
     }
-    /* 설계 개선: 가장 큰 응답이 통째로 들어가게 키운다. 거부되면(한도) 그대로 쓴다. 실제 크기는 tp_server_info 가 기록 */
+    /* 원인 확인 실험: 응답 FIFO 크기. 거부되면(사용자별 한도) 그대로 쓴다. 실제 크기는 tp_server_info 가 기록 */
     if (srv_resp_sz > 0) (void)fcntl(fd, F_SETPIPE_SZ, srv_resp_sz);
+    atomic_fetch_add(&srv_nopen, 1);                /* 설계 개선(OSP_PIPE_GROW)이 보는 접속 수와 시각 */
+    atomic_store(&srv_open_ns, mono_ns());
     return fd;
+}
+
+/*
+ * 설계 개선의 응답 보내기. 워커는 FIFO 에서 기다리지 않는다.
+ *   나머지가 없으면 막히지 않게 써 보고, 자리가 없어 못 쓴 뒤쪽을 나머지로 옮긴 뒤 송신 스레드에 맡긴다.
+ *   나머지가 있으면 순서를 지키려고 그 뒤에 붙인다. 붙일 자리(PEND_CAP)가 없을 때만 송신 스레드가 비울 때까지
+ *   기다린다(동시 요청이 많은 클라이언트가 응답을 읽지 않을 때. 서버 메모리를 클라이언트당 160KB 로 묶는다).
+ * srv_resp_mtx[id] 를 잡고 부른다. 성공(보냈거나 맡겼다) 0, 실패 -1.
+ */
+/* 나머지가 다 빠지기를 기다린다. 세션이 바뀌거나 종료 중이면 -1 (EPIPE) */
+static int pend_wait_empty_locked(uint32_t id)
+{
+    pend_t *p = &srv_pend[id];
+    uint32_t gen = p->gen;
+    while (p->len > 0 && p->gen == gen && !atomic_load(&srv_stopping)) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        ts.tv_nsec += 50 * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+        pthread_cond_timedwait(&srv_pend_cv[id], &srv_resp_mtx[id], &ts);
+    }
+    if (p->gen != gen || atomic_load(&srv_stopping)) { errno = EPIPE; return -1; }
+    return 0;
+}
+
+/*
+ * PEND_CAP 보다 큰 응답(응용에는 없다. 1단계 벤치마크와 전송 계층 시험의 1MB): 나머지가 다 빠진 뒤
+ * 처음 설계처럼 끝까지 쓴다. 막히지 않는 fd 라 자리가 없으면 poll 로 기다린다. *done 에 쓴 바이트
+ */
+static int write_big_locked(int fd, const msg_hdr_t *hdr, const void *payload, size_t *done)
+{
+    struct iovec iov[2] = {
+        { (void *)hdr, sizeof *hdr },
+        { (void *)payload, hdr->payload_len },
+    };
+    struct iovec *v = iov;
+    int cnt = hdr->payload_len ? 2 : 1;
+    *done = 0;
+    while (cnt > 0) {
+        ssize_t w = writev(fd, v, cnt);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            if (errno != EAGAIN) return -1;
+            if (atomic_load(&srv_stopping)) { errno = EPIPE; return -1; }
+            struct pollfd pf = { .fd = fd, .events = POLLOUT };
+            (void)poll(&pf, 1, 50);
+            continue;
+        }
+        *done += (size_t)w;
+        size_t left = (size_t)w;
+        while (cnt > 0 && left >= v->iov_len) { left -= v->iov_len; v++; cnt--; }
+        if (cnt > 0) { v->iov_base = (char *)v->iov_base + left; v->iov_len -= left; }
+    }
+    return 0;
+}
+
+static int send_resp_async_locked(uint32_t id, const msg_hdr_t *hdr, const void *payload)
+{
+    size_t total = sizeof *hdr + hdr->payload_len;
+    if (total > PEND_CAP) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (srv_resp_fd[id] < 0) {
+                srv_resp_fd[id] = open_resp(id);
+                if (srv_resp_fd[id] < 0) return -1;
+            }
+            if (pend_wait_empty_locked(id) < 0) return -1;
+            size_t done;
+            if (write_big_locked(srv_resp_fd[id], hdr, payload, &done) == 0) return 0;
+            int e = errno;
+            drop_resp_locked(id);
+            errno = e;
+            if (!(e == EPIPE && done == 0)) return -1;
+        }
+        return -1;
+    }
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (srv_resp_fd[id] < 0) {
+            srv_resp_fd[id] = open_resp(id);
+            if (srv_resp_fd[id] < 0) return -1;
+        }
+        pend_t *p = &srv_pend[id];
+        if (p->len > 0) {
+            uint32_t gen = p->gen;
+            while (p->len + total > PEND_CAP && p->gen == gen && !atomic_load(&srv_stopping)) {
+                struct timespec ts;
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                ts.tv_nsec += 50 * 1000000L;                    /* 종료(srv_stopping)를 놓치지 않게 0.05초마다 본다 */
+                if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+                pthread_cond_timedwait(&srv_pend_cv[id], &srv_resp_mtx[id], &ts);
+            }
+            if (p->gen != gen || atomic_load(&srv_stopping)) { errno = EPIPE; return -1; }
+            if (p->len > 0) {
+                pend_put(id, hdr, payload, 0);
+                pend_arm(id);
+                return 0;
+            }
+            /* 기다리는 동안 다 비었다. 아래에서 바로 써 본다 */
+        }
+        if (srv_grow) fit_resp_locked(id, total);
+        struct iovec iov[2] = {
+            { (void *)hdr, sizeof *hdr },
+            { (void *)payload, hdr->payload_len },
+        };
+        size_t done;
+        if (writev_full(srv_resp_fd[id], iov, hdr->payload_len ? 2 : 1, &done) == 0) return 0;
+        int e = errno;
+        if (e == EAGAIN) {                                      /* 자리가 없다: 못 쓴 뒤쪽을 맡긴다 */
+            pend_put(id, hdr, payload, done);
+            pend_arm(id);
+            return 0;
+        }
+        drop_resp_locked(id);                                   /* 중간까지 쓴 스트림은 이어 쓸 수 없다 */
+        errno = e;
+        if (!(e == EPIPE && done == 0)) return -1;              /* 처음 설계와 같은 재시도 (아래 tp_send_resp) */
+    }
+    return -1;
 }
 
 int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
@@ -552,6 +902,13 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
 
     int rc = -1;
     pthread_mutex_lock(&srv_resp_mtx[id]);
+    if (srv_async) {
+        rc = send_resp_async_locked(id, hdr, payload);
+        int e = errno;
+        pthread_mutex_unlock(&srv_resp_mtx[id]);
+        errno = e;
+        return rc;
+    }
 
     /*
      * 예전 클라이언트가 나간 뒤 같은 번호의 새 클라이언트가 FIFO 를 다시 만든 경우,
@@ -562,6 +919,7 @@ int tp_send_resp(const msg_hdr_t *hdr, const void *payload)
             srv_resp_fd[id] = open_resp(id);
             if (srv_resp_fd[id] < 0) break;
         }
+        if (srv_grow) fit_resp_locked(id, sizeof *hdr + hdr->payload_len);
         struct iovec iov[2] = {
             { (void *)hdr, sizeof *hdr },
             { (void *)payload, hdr->payload_len },
@@ -612,6 +970,9 @@ void tp_server_close(void)
     unlink(rp);
     unlink(lp);
 
+    /* 설계 개선: 송신 스레드가 남은 나머지를 쓰게 잠깐 두고 끝낸다 (응답을 다 받은 클라이언트에게는 남은 것이 없다) */
+    if (srv_async) async_stop();
+
     /*
      * 정상 종료에서는 송신하던 워커가 모두 빠져나온 뒤라 락이 늘 비어 있다(transport.h 의 약속).
      * 서버가 두 번째 신호로 바로 끝날 때는 멈춘 클라이언트에게 write 하며 락을 쥔 워커가 남아 있을 수 있다.
@@ -627,6 +988,11 @@ void tp_server_close(void)
     close(srv_req_fd);  srv_req_fd = -1;
     close(srv_wake_fd); srv_wake_fd = -1;
     close(srv_lock_fd); srv_lock_fd = -1;
+    if (srv_async) {
+        close(srv_ep);   srv_ep = -1;
+        close(srv_evfd); srv_evfd = -1;
+        srv_async = false;
+    }
     srv_opened = 0;
 }
 
