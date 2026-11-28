@@ -18,6 +18,11 @@
 #   cause-mix                     원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 요청 종류만 DRAW만 / SNAPSHOT만으로 바꾼다
 #   cause-ring                    원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 shm 응답 링 칸 수만 34·68·136 으로 바꾼다
 #                                 (넷 다 기본 목록에 없다. EXPS="cause-workers cause-lockw cause-mix cause-ring" 로 따로 돌린다)
+#   target-ph, imp-target-ph      목표 부하를 클라이언트마다 위상을 흩어 다시 잰다(11/28 추가). target·imp-target 은 처음처럼
+#                                 위상을 맞춘다(클라이언트 -A). 위상을 맞추면 도착이 주기마다 몰리고 그 모양이 IPC마다 달랐다
+#   cause-pipe                    원인 확인(pipe, 11/28 추가): 요청 받기 방식(OSP_PIPE_RBUF)과 응답 FIFO 용량(OSP_PIPE_RESP_SZ)만 바꾼다
+#   imp-pipe                      개선 전후(pipe): 응답 FIFO 용량 키우기(OSP_PIPE_RESP=1), 서버 -N 은 클라이언트 수
+#                                 (넷 다 기본 목록에 없다. EXPS="target-ph imp-target-ph cause-pipe imp-pipe")
 #
 # 실행 하나: 서버를 새로 띄우고 → 실행기가 클라이언트 N개를 워밍업시킨 뒤 함께 시작 → 끝나면 검증기로 정답을 만들어
 # 두고 서버를 SIGINT 로 끝낸다. 서버는 정답과 그림판 체크섬을 비교해 CSV 서버 줄의 checksum_ok 에 남긴다.
@@ -47,7 +52,7 @@ conds_for() {
     thr)    echo "-K 1|1|-f 16|1|" ;;
     scale)  for m in 90 100; do for n in 1 4 16 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m $m -f 1|$d|"; done; done ;;
     lock)   for l in rw room; do for n in 16 64 256; do echo "-K 1 -l $l|$n|-f 1|2|"; done; done ;;
-    target) echo "-K 8|1024|-H 67 -f 4|3|" ;;
+    target) echo "-K 8|1024|-H 67 -f 4 -A|3|" ;;
     cause-procs) echo "-K 8|64|-m 90 -f 16|3|"; echo "-K 8|256|-m 90 -f 4|3|"; echo "-K 8|1024|-m 90 -f 1|3|" ;;
     imp-mq-q)    for q in 1 2 4 8; do echo "-K 8|1024|-m 90 -f 1|3|OSP_MQ_RESP_Q=$q"; done ;;
     imp-mq-req)  echo "-K 8|256|-m 90 -f 1|3|OSP_MQ_RESP_Q=8"
@@ -56,7 +61,16 @@ conds_for() {
                  echo "-K 8|1024|-m 90 -f 1|3|OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1" ;;
     imp-scale)   echo "-K 8|1024|-m 90 -f 1|3|"
                  for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done ;;
-    imp-target)  echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
+    imp-target)  echo "-K 8|1024|-H 67 -f 4 -A|3|$IMP_ENV" ;;
+    target-ph)     echo "-K 8|1024|-H 67 -f 4|3|" ;;
+    imp-target-ph) echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
+    cause-pipe)    for e in "" OSP_PIPE_RBUF=1 OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-f 16|1|$e"; done
+                   for e in "" OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-m 0 -f 16|1|$e"; done
+                   for e in "" OSP_PIPE_RBUF=1; do echo "-K 1|1|-m 100 -f 16|1|$e"; done
+                   for e in "" OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-m 0 -S 256 -f 1|1|$e"; done ;;
+    imp-pipe)      for e in "" OSP_PIPE_RESP=1; do echo "-K 1 -N 1|1|-f 16|1|$e"; done
+                   for e in "" OSP_PIPE_RESP=1; do echo "-K 8 -N 64|64|-m 90 -f 1|2|$e"; done
+                   for e in "" OSP_PIPE_RESP=1; do echo "-K 8 -N 1024|1024|-m 90 -f 1|3|$e"; done ;;
     mem-shm)     for f in 1 4; do for c in 34 17; do echo "-K 8|1024|-m 90 -f $f|3|OSP_SHM_REQ=per OSP_SHM_RESP_CHUNKS=$c"; done; done ;;
     cause-workers) for wk in 1 2 4 8; do echo "-K 1 -w $wk|1|-f 16|1|"; done ;;
     cause-lockw)   for wk in 1 4 16; do echo "-K 1 -l room -w $wk|64|-f 1|2|"; done ;;
@@ -73,8 +87,9 @@ IMP_ENV="OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 OSP_SHM_REQ=per"
 ipcs_for() {
     case $1 in
     imp-mq-q|imp-mq-req)  echo "mq" ;;
-    imp-scale|imp-target) echo "mq shm" ;;
+    imp-scale|imp-target|imp-target-ph) echo "mq shm" ;;
     mem-shm|cause-ring)   echo "shm" ;;
+    cause-pipe|imp-pipe)  echo "pipe" ;;
     *)                    echo "$IPCS" ;;
     esac
 }
