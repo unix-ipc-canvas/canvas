@@ -52,7 +52,7 @@
 #define SIG_READY    (SIGRTMIN)             /* 클라이언트·서버 → 조정: 준비됨 (값 = 보낸 쪽 번호) */
 #define SIG_GO       (SIGRTMIN + 1)         /* 조정 → 클라이언트: 측정 시작 */
 #define SIG_MARK     SIGUSR1                /* 조정 → 서버: 측정 시작, 자원 사용량 기록 */
-#define SRV_TAG      1000                   /* 서버가 보낸 SIG_READY 의 값 */
+#define SRV_TAG      (-1)                   /* 서버가 보낸 SIG_READY 의 값. 클라이언트 번호(0 .. MAX_CLIENTS-1)와 겹치지 않는다 */
 
 #define CONNECT_SEC  10                     /* 서버가 뜰 때까지 클라이언트가 기다리는 시간 */
 #define RUN_SEC      180                    /* 실행 한 번의 제한 시간. 넘으면 실패로 끝낸다 */
