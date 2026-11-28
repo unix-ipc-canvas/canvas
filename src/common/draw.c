@@ -4,7 +4,7 @@
  *   draw_<ipc> [-k 그림판] [-i 번호] [-I 갱신ms]
  *
  * 마우스를 지원하는 터미널(Ptyxis, GNOME 터미널, xterm 등)에서 쓴다. 외부 라이브러리 없이 ANSI 이스케이프로 그린다.
- * 같은 그림판의 다른 클라이언트(사람, 부하 클라이언트)가 그린 것은 보이는 영역을 주기적으로 SNAPSHOT 해서 보여 준다.
+ * 같은 그림판의 다른 클라이언트(사람, 자동 그리기 클라이언트)가 그린 것은 보이는 영역을 주기적으로 SNAPSHOT 해서 보여 준다.
  * 표준 입력이 터미널이 아니면 명령 줄 모드다 (시험·스크립트용): draw X Y W H V | snap X Y W H | room K | stats |
  * badtype | sleep MS | quit. 명령마다 응답을 기다린 뒤 결과 한 줄을 쓴다.
  *
@@ -40,7 +40,7 @@
 #define NSLOT 128u
 #define SLOT_BITS 10
 
-/* ---- 요청 표 (부하 클라이언트와 같은 방식) ---- */
+/* ---- 요청 표 (자동 그리기 클라이언트와 같은 방식) ---- */
 
 typedef struct {
     atomic_int state;

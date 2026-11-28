@@ -41,6 +41,6 @@
 | `stage2-meas-run.png` | 2단계 본 측정 창(마지막 실험과 남은 자원 검사) | 6.3절 |
 | `stage2-make.png`, `stage2-make-test.png` | 2단계 `make`, `make test`(PASS 75 / FAIL 0 / SKIP 0) | 5.3절 |
 | `stage2-demo-draw.png` | 그리기 클라이언트 2개가 같은 그림을 보는 화면 | 5.3절, 발표자료 |
-| `stage2-demo-bots.png`, `stage2-ipcs-running.png` | 봇 1022개 + 그리기 2개(접속 1024)와 실행 중 `ipcs` | 5.3절, 발표자료 |
+| `stage2-demo-bots.png`, `stage2-ipcs-running.png` | 자동 그리기 클라이언트 1022개 + 그리기 클라이언트 2개(접속 1024)와 실행 중 `ipcs` | 5.3절, 발표자료 |
 | `stage2-ipcs-after.png` | 서버 종료(체크섬)와 종료 뒤 `ipcs`(남은 자원 0개) | 5.3절, 발표자료 |
 | `stage2-demo-check.png` | `scripts/demo-check.sh`: 세 버전 × 클라이언트 1024개 | 5.3절 |

@@ -2,7 +2,7 @@
 #
 #   make            전체 빌드 (소스가 있는 것만)
 #   make bench      1단계 벤치마크 (pipe, mq, shm, 익명 pipe upipe)
-#   make app        2단계 응용 3종 (서버, 부하 클라이언트, 그리기 클라이언트) + 실행기 + 검증기
+#   make app        2단계 응용 3종 (서버, 자동 그리기 클라이언트, 그리기 클라이언트) + 실행기 + 검증기
 #   make pipe       pipe 버전만   (mq, shm, upipe 도 같음. upipe 는 벤치마크만)
 #   make tptest     전송 계층 시험 도구 3종 (scripts/test-transport.sh 가 쓴다)
 #   make check      헤더 문법 검사 + 빌드 가능한 대상 출력

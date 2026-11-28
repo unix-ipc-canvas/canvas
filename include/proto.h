@@ -1,7 +1,7 @@
 /*
  * proto.h - 다중 그림판 공유 캔버스 서버 메시지 형식 (세 IPC 버전 공통)
  *
- * 11/18 확정 (#4). 11/27 2단계 재수행에서 넓힘: 클라이언트 1024개, 그림판 번호(머리의 room), SNAPSHOT 상한.
+ * 11/18 확정 (#4). 11/27 넓힘: 클라이언트 1024개, 그림판 번호(머리의 room), SNAPSHOT 상한.
  * 바꿀 때는 owner 가 승인한 PR 로만 바꾼다 (docs/CONTRIBUTING.md 의 PR 절).
  * 모든 메시지는 msg_hdr_t 로 시작하고, 그 뒤에 payload_len 바이트가 붙는다.
  * 응답 payload 는 항상 srv_ts_t 로 시작한다. SNAPSHOT 응답은 그 뒤에 영역의 w × h 바이트가 붙는다.
