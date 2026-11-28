@@ -7,7 +7,8 @@ System V shared memory + semaphore 세 버전으로 구현했다. 전송 계층�
 System V key 는 60020 ~ 60029(60xxy, 팀 번호 02), FIFO 는 /tmp/osproject_2_* 이다.
 
 1. 실행 환경
-   - Linux (측정: Ubuntu 26.04.1 LTS, 커널 7.0.0-44, Intel Core 5 120U, 논리 CPU 12개, 메모리 14GiB, 가상화 없음)
+   - Linux (측정: Ubuntu 26.04.1 LTS, 커널 7.0.0-43(1단계)·7.0.0-44(2단계, 1단계 보강), Intel Core 5 120U,
+     논리 CPU 12개, 메모리 약 15GiB, 가상화 없음)
    - gcc 15.2, GNU make. 외부 라이브러리 없음. 그래프만 Python 3 + matplotlib.
 
 2. 컴파일
