@@ -292,9 +292,11 @@ else
         else ok T-24 "$ipc -l none: 같은 칸 갱신이 사라져 체크섬이 검증기와 다름 (락이 경쟁을 막고 있다는 대조)"; fi
     else ng T-24 "$ipc 서버를 띄우지 못함"; fi
 
-    # T-26 설계 개선 모드 (N-6): mq 응답 큐 8개 + 요청 큐 입장 제한(OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1), shm 클라이언트별 요청 링(OSP_SHM_REQ=per).
+    # T-26 설계 개선 모드 (N-6): mq 응답 큐 8개 + 요청 큐 입장 제한(OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1), shm 클라이언트별 요청 링(OSP_SHM_REQ=per),
+    # pipe 받기 버퍼 + 응답 FIFO 128KB(OSP_PIPE_RBUF=1 OSP_PIPE_RESP_SZ=131072. 크기를 주면 -N 과 관계없이 키우려 하고,
+    # 클라이언트 1024개에서는 사용자별 한도로 거부되는 경로도 함께 지난다).
     # 전송 계층 시험 23개, T-10 과 같은 판정, 클라이언트 1024개 × 그림판 8개, kill -9 뒤 같은 번호 재접속
-    for m in "mq OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1" "shm OSP_SHM_REQ=per"; do
+    for m in "mq OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1" "shm OSP_SHM_REQ=per" "pipe OSP_PIPE_RBUF=1 OSP_PIPE_RESP_SZ=131072"; do
         read -r ipc SENV <<< "$m"
         case " $APPS " in *" $ipc "*) ;; *) sk T-26 "$ipc 실행 파일 없음"; SENV=""; continue ;; esac
         r=""
@@ -324,13 +326,14 @@ else
         make -s ipcclean > /dev/null 2>&1
     done
 
-    # T-25 ThreadSanitizer: 따로 빌드한 tsan/ 에서 T-10 을 줄여 돌린다. 설계 개선 모드 2개도 함께
+    # T-25 ThreadSanitizer: 따로 빌드한 tsan/ 에서 T-10 을 줄여 돌린다. 설계 개선 모드 3개도 함께
     if echo 'int main(void){return 0;}' | gcc -fsanitize=thread -x c -o "$work/tsan_probe" - 2>/dev/null && "$work/tsan_probe" 2>/dev/null; then
         if make -s clean > /dev/null 2>&1 && make -s app EXTRA_CFLAGS='-fsanitize=thread -O1' > "$work/tsan_build" 2>&1; then
             tbad=""
             modes=""; for ipc in $APPS; do modes="$modes $ipc"; done
             case " $APPS " in *" mq "*) modes="$modes mq:OSP_MQ_RESP_Q=8,OSP_MQ_ADMIT=1" ;; esac
             case " $APPS " in *" shm "*) modes="$modes shm:OSP_SHM_REQ=per" ;; esac
+            case " $APPS " in *" pipe "*) modes="$modes pipe:OSP_PIPE_RBUF=1,OSP_PIPE_RESP_SZ=131072" ;; esac
             for m in $modes; do
                 ipc=${m%%:*}; SENV=""; [ "$m" != "$ipc" ] && SENV=${m#*:} && SENV=${SENV//,/ }
                 if start_server "$ipc" -K 2; then
@@ -342,7 +345,7 @@ else
                 else tbad="$tbad $m:start"; fi
             done
             SENV=""
-            [ -z "$tbad" ] && ok T-25 "ThreadSanitizer 빌드로 세 버전과 개선 모드 2개, 클라이언트 4개, 보고 0건, 체크섬 일치" || ng T-25 "ThreadSanitizer:$tbad $(grep -h -m1 -A3 'WARNING: ThreadSanitizer' "$work/srv.err" "$work"/tc*.out | head -8)"
+            [ -z "$tbad" ] && ok T-25 "ThreadSanitizer 빌드로 세 버전과 개선 모드 3개, 클라이언트 4개, 보고 0건, 체크섬 일치" || ng T-25 "ThreadSanitizer:$tbad $(grep -h -m1 -A3 'WARNING: ThreadSanitizer' "$work/srv.err" "$work"/tc*.out | head -8)"
         else ng T-25 "ThreadSanitizer 빌드 실패"; head -5 "$work/tsan_build"; fi
         make -s clean > /dev/null 2>&1; make -s > /dev/null 2>&1          # 일반 빌드로 되돌린다
     else
