@@ -41,6 +41,7 @@
 static uint32_t opt_id, opt_room = UINT32_MAX, opt_f = 1, opt_warm = 200;
 static uint64_t opt_seed, opt_n = 10000;
 static double opt_dur, opt_hz;
+static bool opt_aligned;             /* -A: 페이스 모드의 위상을 흩지 않는다(처음 목표 부하 실험과 같게) */
 static wl_cfg_t W = { 0, WL_DRAW_PCT, WL_RECT, WL_SNAP };
 static bool opt_gate, opt_quiet;
 static const char *opt_csv, *opt_exp = "latency";
@@ -188,13 +189,23 @@ static void *send_main(void *arg)
     t_start = now_ns();
     uint64_t deadline = opt_dur > 0 ? t_start + (uint64_t)(opt_dur * 1e9) : 0;
     uint64_t period = opt_hz > 0 ? (uint64_t)(1e9 / opt_hz) : 0;
+    /*
+     * 페이스 모드(-H)의 시작 위상. 클라이언트들은 시작 신호를 거의 같은 순간에 받으므로 위상이 같으면 요청이 주기마다
+     * 한꺼번에 몰린다(사람 1024명이 같은 순간에 마우스를 움직이는 꼴). 번호에 황금비를 곱한 소수 부분으로 주기 안에 고르게 흩는다.
+     * DECISION: 난수가 아니라 번호로 정해 실행마다 같은 도착 모양이 되게 한다. 처음(위상 0, 지금의 -A)에는 시작 신호를 받는
+     *   순서에 따라 클라이언트 1024개가 약 5ms 안에 몰렸고, 그 퍼짐이 IPC마다 달라(shm 개선 모드만 약 19ms) 목표 부하의
+     *   지연 비교가 IPC 차이가 아니라 도착 모양 차이를 쟀다 (docs/measurement/stage2.md).
+     */
+    double frac = (double)opt_id * 0.6180339887498949;
+    frac -= (double)(uint64_t)frac;
+    uint64_t phase = period && !opt_aligned ? (uint64_t)(frac * (double)period) : 0;
     uint64_t i = 0;
     /* MEASURE_BEGIN 측정 구간: 출력과 malloc 을 하지 않는다 (요구사항 N-7) */
     for (;; i++) {
         if (deadline ? now_ns() >= deadline : i >= opt_n) break;
         if (should_stop()) break;
         if (period) {
-            uint64_t at = t_start + i * period;
+            uint64_t at = t_start + phase + i * period;
             struct timespec ts = { (time_t)(at / 1000000000ull), (long)(at % 1000000000ull) };
             while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR)
                 ;
@@ -331,9 +342,9 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
             "사용법: %s [-i 번호] [-k 그림판] [-s 시드] [-n 요청 | -d 초] [-w 워밍업] [-m DRAW%%] [-r 변] [-S 변]\n"
-            "          [-f 동시요청] [-H 초당요청] [-G] [-o CSV -e 실험 -R 반복] [-q]\n"
+            "          [-f 동시요청] [-H 초당요청 [-A]] [-G] [-o CSV -e 실험 -R 반복] [-q]\n"
             "  -i 0~%u (0)  -k 그림판 (번호 mod 8)  -s (번호+1)  -n (10000)  -w (200)  -m (90)  -r (16)  -S 1~%u (256)\n"
-            "  -f 1~%u (1)  -H 0 = 쉬지 않고\n",
+            "  -f 1~%u (1)  -H 0 = 쉬지 않고  -A = -H 의 위상을 번호로 흩지 않고 모두 0으로\n",
             prog, MAX_CLIENTS - 1, SNAP_MAX_SIDE, MAX_INFLIGHT);
 }
 
@@ -380,7 +391,7 @@ int main(int argc, char **argv)
     int c;
     uint64_t v;
     bool seed_set = false;
-    while ((c = getopt(argc, argv, "i:k:s:n:d:w:m:r:S:f:H:Go:e:R:qh")) != -1) {
+    while ((c = getopt(argc, argv, "i:k:s:n:d:w:m:r:S:f:H:AGo:e:R:qh")) != -1) {
         switch (c) {
         case 'i': if (parse_u64(optarg, 0, MAX_CLIENTS - 1, &v) < 0) goto bad; opt_id = (uint32_t)v; break;
         case 'k': if (parse_u64(optarg, 0, MAX_ROOMS - 1, &v) < 0) goto bad; opt_room = (uint32_t)v; break;
@@ -393,6 +404,7 @@ int main(int argc, char **argv)
         case 'S': if (parse_u64(optarg, 1, SNAP_MAX_SIDE, &v) < 0) goto bad; W.snap = (uint32_t)v; break;
         case 'f': if (parse_u64(optarg, 1, MAX_INFLIGHT, &v) < 0) goto bad; opt_f = (uint32_t)v; break;
         case 'H': opt_hz = atof(optarg); if (opt_hz < 0) goto bad; break;
+        case 'A': opt_aligned = true; break;
         case 'G': opt_gate = true; break;
         case 'o': opt_csv = optarg; break;
         case 'e': opt_exp = optarg; break;
