@@ -25,7 +25,7 @@ System V key 는 60020 ~ 60029(60xxy, 팀 번호 02), FIFO 는 /tmp/osproject_2_
        ./bin/server_<ipc> -K 1 -l room       그림판 1개, 그림판 전체 mutex
    (2) 그리기 클라이언트 (마우스를 지원하는 터미널에서, 여러 터미널에 띄우면 함께 그린다)
        ./bin/draw_<ipc> -k 0                 왼쪽 버튼 끌기: 그리기, 1~9: 색, b/r: 붓/사각형, 휠: 확대, q: 끝
-   (3) 부하 클라이언트와 실행기
+   (3) 자동 그리기 클라이언트와 실행기
        ./bin/client_<ipc> -i 0               기준 워크로드(DRAW 90%, SNAPSHOT 10%) 10,000개
        ./bin/loadgen -N 1024 -K 8 -M /tmp/man.txt -- ./bin/client_<ipc> -d 3 -w 50
                                              클라이언트 1024개를 함께 시작시키고 결과를 합친다

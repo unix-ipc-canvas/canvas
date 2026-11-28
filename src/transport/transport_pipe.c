@@ -967,7 +967,6 @@ void tp_server_close(void)
      * 정상 종료에서는 송신하던 워커가 모두 빠져나온 뒤라 락이 늘 비어 있다(transport.h 의 약속).
      * 서버가 두 번째 신호로 바로 끝날 때는 멈춘 클라이언트에게 write 하며 락을 쥔 워커가 남아 있을 수 있다.
      * 그 락을 기다리면 닫기도 함께 멈추므로, 잡히지 않는 번호는 건너뛴다. 곧 _exit 하므로 그 fd 는 커널이 닫는다.
-     * (처음 2단계의 eb520c9 와 같은 수정)
      */
     for (uint32_t i = 0; i < MAX_CLIENTS; i++) {
         if (pthread_mutex_trylock(&srv_resp_mtx[i]) != 0) continue;

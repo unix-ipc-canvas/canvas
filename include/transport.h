@@ -1,7 +1,7 @@
 /*
  * transport.h - 전송 계층 인터페이스 (IPC 버전마다 하나씩 구현)
  *
- * 11/18 확정 (#4). 11/27 2단계 재수행에서 tp_set_limits, tp_server_info 를 더했다.
+ * 11/18 확정 (#4). 11/27 tp_set_limits, tp_server_info 를 더했다.
  * 바꿀 때는 owner 가 승인한 PR 로만 바꾼다 (docs/CONTRIBUTING.md 의 PR 절).
  *
  * 서버, 클라이언트, 1단계 벤치마크는 이 함수들만 부른다. 어떤 IPC 인지는 링크할 때 정해진다.

@@ -221,7 +221,7 @@ else
             [ $rc -eq 1 ] && grep -q '같은 번호' "$work/c.out" && ok T-17 "$ipc 같은 번호 → 거부" || ng T-17 "$ipc 같은 번호: rc=$rc $(cat "$work/c.out")"
         else ng T-17 "$ipc 서버를 띄우지 못함"; fi
 
-        # T-18 스레드 수 (서버, 부하 클라이언트, 그리기 클라이언트, 실행기)
+        # T-18 스레드 수 (서버, 자동 그리기 클라이언트, 그리기 클라이언트, 실행기)
         if start_server "$ipc"; then
             "bin/client_$ipc" -i 3 -n 100000000 -q > /dev/null 2>&1 & CP=$!
             (echo "sleep 1500"; echo quit) | "bin/draw_$ipc" > /dev/null 2>&1 & DP=$!
@@ -232,7 +232,7 @@ else
             kill -INT "$CP"; wait "$CP" 2>/dev/null; wait "$DP" 2>/dev/null; kill -TERM "$LP" 2>/dev/null; wait "$LP" 2>/dev/null
             stop_server
             [ "$ts" -ge 3 ] && [ "$tc" -ge 3 ] && [ "$td" -ge 3 ] && [ "$tl" -ge 3 ] \
-                && ok T-18 "$ipc 스레드 수: 서버 $ts, 부하 클라이언트 $tc, 그리기 $td, 실행기 $tl" \
+                && ok T-18 "$ipc 스레드 수: 서버 $ts, 자동 그리기 클라이언트 $tc, 그리기 클라이언트 $td, 실행기 $tl" \
                 || ng T-18 "$ipc 스레드 수: 서버 $ts, 부하 $tc, 그리기 $td, 실행기 $tl"
         else ng T-18 "$ipc 서버를 띄우지 못함"; fi
 

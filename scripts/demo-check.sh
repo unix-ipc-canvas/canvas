@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 데모용 점검: 세 버전마다 서버를 띄우고 부하 클라이언트 N개(기본 1024)를 함께 돌린 뒤,
+# 데모용 점검: 세 버전마다 서버를 띄우고 자동 그리기 클라이언트 N개(기본 1024)를 함께 돌린 뒤,
 # 서버의 그림판별 체크섬이 검증기 정답과 같은지, 서버가 끝난 뒤 남은 IPC 자원이 없는지 보여 준다.
 #
 #   scripts/demo-check.sh [클라이언트 수] [초] [그림판 수]     예: scripts/demo-check.sh 1024 3 8
@@ -25,7 +25,7 @@ our_left() {
 }
 
 for ipc in pipe mq shm; do
-    printf '\n\033[1m== %s: 서버(그림판 %d개) + 부하 클라이언트 %d개, %d초\033[0m\n' "$ipc" "$K" "$N" "$DUR"
+    printf '\n\033[1m== %s: 서버(그림판 %d개) + 자동 그리기 클라이언트 %d개, %d초\033[0m\n' "$ipc" "$K" "$N" "$DUR"
     "bin/server_$ipc" -K "$K" -p - > "$tmp/srv.out" 2> "$tmp/srv.err" &
     sp=$!
     for _ in $(seq 200); do grep -q "시작 (pid $sp," "$tmp/srv.err" 2>/dev/null && break; sleep 0.05; done

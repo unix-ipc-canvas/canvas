@@ -342,7 +342,7 @@ static watch_t srv_watch;
  * 여러 조각으로 온 요청을 클라이언트별로 붙이는 자리.
  * DECISION: 클라이언트마다 요청 최대 크기를 한 번에 잡아 둔다. 측정 구간 안에서 malloc 을 부르지 않기 위해서다.
  *   쓰지 않은 페이지는 실제 메모리를 차지하지 않는다. 1단계 벤치(tp_set_limits 를 부르지 않음)는 클라이언트 16개 ×
- *   MAX_PAYLOAD = 16MB 다. 2단계 응용은 요청이 모두 조각 하나라 이 자리를 잡지 않는다(11/27 재수행, 클라이언트 1024개).
+ *   MAX_PAYLOAD = 16MB 다. 2단계 응용은 요청이 모두 조각 하나라 이 자리를 잡지 않는다(클라이언트 1024개).
  */
 static uint32_t lim_clients = 16;                /* tp_set_limits. 부르지 않으면 1단계 값 */
 static size_t   lim_req = sizeof(msg_hdr_t) + MAX_PAYLOAD;
