@@ -154,6 +154,8 @@ sequenceDiagram
 
 공통 조건: 서버 워커 4(`cause-workers`·`cause-lockw` 빼고), 타일 64, 클라이언트마다 워밍업 요청 200개(클라이언트 256 이상은 50개). 측정 시간(`-d`)은 `type`·`thr`·`cause-workers`·`cause-mix`·`cause-ring`·`cause-scan` 1초, `scale`·`lock`·`imp-scale`·`cause-lockw` 2초(클라이언트 256 이상 3초), `target`과 그 밖의 원인 확인·개선 실험 3초다(`cause-pipe` 1초, `imp-all`·`part-pipe`는 `scale`·`thr`과 같다).
 
+전원: 노트북은 전원 어댑터를 연결한 채 잰다. 배터리로 돌면 CPU 전력 한도가 낮아져 처리량이 절반 아래로 떨어진다. `scripts/app-bench.sh`는 시작할 때와 실행마다 어댑터(`/sys/class/power_supply`의 Mains)가 연결되어 있는지 보고, 측정 중에 빠지면 그 자리에서 멈춘다(시험 삼아 돌릴 때는 `ALLOW_BATTERY=1`). 측정 환경 `results/app/app_env.txt`에 전원 상태(`power:` 줄)를 남긴다. 11/28 13:07:57에 개선 전후 측정 도중 어댑터가 빠져 반복 18부터 배터리로 재졌으므로, 그 측정을 버리고 어댑터를 연결한 뒤 처음부터 다시 쟀다. 그 앞의 2단계 측정(본 측정, 원인 확인)은 모두 어댑터가 연결된 상태였다(UPower 충전 기록: 11/27 20:10부터 11/28 13:07:57까지 완충 상태로 연결). 1단계 반복 20번과 원인 확인 실험(11/19 22:22~23:10)은 어댑터를 연결한 채 켠 뒤였고(커널 부팅 기록 20:47), 그 사이 어댑터가 빠질 때 남는 기록(nvidia-powerd)이 없었다.
+
 실행 한 번의 순서(`scripts/app-bench.sh`)
 
 1. 서버를 새로 띄운다(`-O`로 서버 줄을 남기게).

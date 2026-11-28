@@ -45,6 +45,32 @@ if [ -n "$(git status --porcelain -- src include Makefile 2>/dev/null)" ] && [ -
     echo "커밋하지 않은 코드 변경이 있다. 커밋한 코드로만 잰다 (시험 삼아 돌릴 때는 ALLOW_DIRTY=1)" >&2
     exit 1
 fi
+
+# 전원. 노트북은 배터리로 돌면 CPU 전력 한도가 낮아져 처리량이 절반 아래로 떨어진다(11/28 13:07 측정 중에 어댑터가 빠져 겪었다).
+# 어댑터(Mains)가 연결되어 있을 때만 재고, 측정 중에 빠지면 그 자리에서 멈춘다. 어댑터가 없는 컴퓨터(데스크톱, CI)는 연결된 것으로 본다
+ac_online() {
+    local p found=0
+    for p in /sys/class/power_supply/*; do
+        [ "$(cat "$p/type" 2>/dev/null)" = Mains ] || continue
+        found=1
+        [ "$(cat "$p/online" 2>/dev/null)" = 1 ] && return 0
+    done
+    [ $found -eq 0 ]
+}
+power_desc() {
+    local p out=""
+    for p in /sys/class/power_supply/*; do
+        case $(cat "$p/type" 2>/dev/null) in
+        Mains)   out="$out $(basename "$p") online=$(cat "$p/online" 2>/dev/null)" ;;
+        Battery) out="$out $(basename "$p") $(cat "$p/status" 2>/dev/null) $(cat "$p/capacity" 2>/dev/null)%" ;;
+        esac
+    done
+    echo "${out# }"
+}
+if ! ac_online && [ -z "${ALLOW_BATTERY:-}" ]; then
+    echo "전원 어댑터가 연결되어 있지 않다($(power_desc)). 연결한 뒤 잰다 (시험 삼아 돌릴 때는 ALLOW_BATTERY=1)" >&2
+    exit 1
+fi
 export BENCH_COMMIT=${BENCH_COMMIT:-$(git rev-parse --short HEAD)}
 make -s app > /dev/null || { echo "빌드 실패" >&2; exit 1; }
 mkdir -p "$OUT"
@@ -126,6 +152,7 @@ record_env() {
         gcc --version | head -1
         echo "virt: $(systemd-detect-virt 2>/dev/null || true)"
         echo "governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+        echo "power: $(power_desc), profile $(powerprofilesctl get 2>/dev/null || echo -)"
         echo "msgmax $(cat /proc/sys/kernel/msgmax) msgmnb $(cat /proc/sys/kernel/msgmnb) msgmni $(cat /proc/sys/kernel/msgmni) sem $(cat /proc/sys/kernel/sem)"
         echo "pipe-max-size $(cat /proc/sys/fs/pipe-max-size) pipe-user-pages-soft $(cat /proc/sys/fs/pipe-user-pages-soft) ulimit-n $(ulimit -n)/$(ulimit -Hn)"
         echo "load $(cat /proc/loadavg)"
@@ -137,6 +164,10 @@ fails=0; runs=0
 run_one() {
     local exp=$1 ipc=$2 rep=$3 sopts=$4 n=$5 copts=$6 dur=$7 senv=$8
     local rooms lock workers tile warm maxc note
+    if ! ac_online && [ -z "${ALLOW_BATTERY:-}" ]; then
+        echo "  중단: 측정 중에 전원 어댑터가 빠졌다($exp 반복 $rep, $(date +%T), $(power_desc)). 이 측정의 원자료는 쓰지 않는다"
+        record_env; exit 3
+    fi
     rooms=$(optval -K 8 $sopts); lock=$(optval -l rw $sopts); workers=$(optval -w 4 $sopts); tile=$(optval -t 64 $sopts)
     maxc=$(optval -N "" $sopts); note=${senv// /;}; [ -n "$maxc" ] && note="${note:+$note;}-N=$maxc"   # 서버 -N 을 준 실험(cause-scan)만 env 열에 남긴다
     warm=200; [ "$n" -ge 256 ] && warm=50
@@ -173,7 +204,7 @@ run_one() {
 
 record_env
 start=$(date +%s)
-echo "측정 시작: 커밋 $BENCH_COMMIT, 실험 [$EXPS], 반복 $REPS, 결과 $OUT/"
+echo "측정 시작: 커밋 $BENCH_COMMIT, 실험 [$EXPS], 반복 $REPS, 결과 $OUT/, 전원 $(power_desc)"
 for exp in $EXPS; do
     mapfile -t CONDS < <(conds_for "$exp")
     [ ${#CONDS[@]} -gt 0 ] || { echo "실험 $exp 의 조건이 없다" >&2; continue; }
