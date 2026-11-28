@@ -26,6 +26,9 @@
 #   part-pipe                     pipe 개선의 부분별 효과(11/28 추가): 응답 FIFO 키우기(OSP_PIPE_GROW)만 / 송신 스레드(OSP_PIPE_ASYNC)만,
 #                                 클라이언트 64·256·1024 (둘 다 켠 것과 처음 설계는 imp-all 에 있다)
 #                                 (다섯 다 기본 목록에 없다. EXPS="imp-all target-ph imp-target-ph part-pipe", cause-pipe 는 따로)
+#   cause-scan                    개선의 대가 원인 확인(shm, 11/28 추가): thr 조건에서 요청 링 방식(공용 / 클라이언트별)과
+#                                 서버가 받을 클라이언트 수(-N 1024 / 16)만 바꾼다. 클라이언트별 링은 받을 때 -N 개 링을 훑는다
+#                                 (기본 목록에 없다. EXPS="cause-scan" 로 따로 돌린다. -N 은 CSV 의 env 열에 "-N=값"으로 남긴다)
 #
 # 실행 하나: 서버를 새로 띄우고 → 실행기가 클라이언트 N개를 워밍업시킨 뒤 함께 시작 → 끝나면 검증기로 정답을 만들어
 # 두고 서버를 SIGINT 로 끝낸다. 서버는 정답과 그림판 체크섬을 비교해 CSV 서버 줄의 checksum_ok 에 남긴다.
@@ -81,6 +84,7 @@ conds_for() {
     cause-lockw)   for wk in 1 4 16; do echo "-K 1 -l room -w $wk|64|-f 1|2|"; done ;;
     cause-mix)     echo "-K 1|1|-m 100 -f 16|1|"; echo "-K 1|1|-m 0 -f 16|1|" ;;
     cause-ring)    for c in 34 68 136; do echo "-K 1|1|-f 16|1|OSP_SHM_RESP_CHUNKS=$c"; done ;;
+    cause-scan)    for nn in 1024 16; do for e in "" OSP_SHM_REQ=per; do echo "-K 1 -N $nn|1|-f 16|1|$e"; done; done ;;
     *)      v="COND_${1//-/_}"; [ -n "${!v:-}" ] && printf '%s\n' "${!v}" | tr ';' '\n' ;;
     esac
 }
@@ -94,7 +98,7 @@ ipcs_for() {
     case $1 in
     imp-mq-q|imp-mq-req)  echo "mq" ;;
     imp-scale|imp-target) echo "mq shm" ;;
-    mem-shm|cause-ring)   echo "shm" ;;
+    mem-shm|cause-ring|cause-scan) echo "shm" ;;
     cause-pipe|part-pipe) echo "pipe" ;;
     *)                    echo "$IPCS" ;;
     esac
@@ -132,12 +136,13 @@ record_env() {
 fails=0; runs=0
 run_one() {
     local exp=$1 ipc=$2 rep=$3 sopts=$4 n=$5 copts=$6 dur=$7 senv=$8
-    local rooms lock workers tile warm
+    local rooms lock workers tile warm maxc note
     rooms=$(optval -K 8 $sopts); lock=$(optval -l rw $sopts); workers=$(optval -w 4 $sopts); tile=$(optval -t 64 $sopts)
+    maxc=$(optval -N "" $sopts); note=${senv// /;}; [ -n "$maxc" ] && note="${note:+$note;}-N=$maxc"   # 서버 -N 을 준 실험(cause-scan)만 env 열에 남긴다
     warm=200; [ "$n" -ge 256 ] && warm=50
     export OSP_IPC=$ipc OSP_CLIENTS=$n OSP_WORKERS=$workers OSP_LOCK=$lock OSP_TILE=$tile
     export OSP_INFLIGHT=$(optval -f 1 $copts) OSP_RATE=$(optval -H 0 $copts) OSP_DRAW_PCT=$(optval -m 90 $copts)
-    export OSP_RECT=$(optval -r 16 $copts) OSP_SNAP=$(optval -S 256 $copts) OSP_ENV_NOTE=${senv// /;}
+    export OSP_RECT=$(optval -r 16 $copts) OSP_SNAP=$(optval -S 256 $copts) OSP_ENV_NOTE=$note
     rm -f "$tmp/expect" "$tmp/man"
     env $senv "bin/server_$ipc" $sopts -p - -O "$OUT/$exp.csv" -e "$exp" -R "$rep" -X "$tmp/expect" > "$tmp/srv.out" 2> "$tmp/srv.err" &
     local sp=$! ok=0
@@ -163,7 +168,7 @@ run_one() {
         echo "  실패: 실행기 $lrc 서버 $src 체크섬 $same | $(head -c 300 "$tmp/lg.out")"
         make -s ipcclean > /dev/null 2>&1
     fi
-    printf '  [%s %d/%d] %-4s N=%-4s %-22s %s| 체크섬 %s\n' "$exp" "$rep" "$REPS" "$ipc" "$n" "$copts${senv:+ $senv}" "$line" "$same"
+    printf '  [%s %d/%d] %-4s N=%-4s %-22s %s| 체크섬 %s\n' "$exp" "$rep" "$REPS" "$ipc" "$n" "$copts${senv:+ $senv}${maxc:+ (서버 -N $maxc)}" "$line" "$same"
 }
 
 record_env

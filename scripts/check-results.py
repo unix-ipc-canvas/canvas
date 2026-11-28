@@ -159,7 +159,7 @@ def t31():
     finish(0, f'2단계 CSV {len(files)}개, {n}줄({", ".join(sorted(roles))})이 APP_CSV_HEADER {len(want)}열과 같다')
 
 
-SINGLE_IPC = ('imp-mq-q', 'imp-mq-req', 'imp-scale', 'imp-target', 'mem-shm', 'cause-ring', 'cause-pipe', 'part-pipe')
+SINGLE_IPC = ('imp-mq-q', 'imp-mq-req', 'imp-scale', 'imp-target', 'mem-shm', 'cause-ring', 'cause-pipe', 'part-pipe', 'cause-scan')
 
 
 def t42():
@@ -184,7 +184,7 @@ def t42():
             conds.setdefault(k, {}).setdefault(r['ipc'], set()).add(r['run'])
     for k, by_ipc in sorted(conds.items()):
         # 해당 IPC 만 재는 실험(app-bench.sh 의 ipcs_for): 처음 측정의 설계 개선(imp-mq-*, imp-scale, imp-target),
-        # 메모리(mem-shm), shm 응답 링(cause-ring), pipe 원인 확인(cause-pipe)과 개선 부분별 효과(part-pipe). 나머지는 세 IPC 모두
+        # 메모리(mem-shm), shm 응답 링(cause-ring)과 링 훑기(cause-scan), pipe 원인 확인(cause-pipe)과 개선 부분별 효과(part-pipe). 나머지는 세 IPC 모두
         # (11/28 의 imp-all, target-ph, imp-target-ph 도 세 IPC 모두)
         single = k[0] in SINGLE_IPC
         for ipc in (sorted(by_ipc) if single else ('pipe', 'mq', 'shm')):
