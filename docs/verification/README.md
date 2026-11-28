@@ -16,7 +16,7 @@
 | T-02 | 버전별 빌드 (C-4, C-7) | `make pipe`, `make mq`, `make shm`, `make upipe`가 각각 성공한다 |
 | T-03 | 공통 코드에 IPC 고유 호출 없음 (C-7) | `src/common`, `src/bench`, `src/test`에 `msgget`, `shmat`, `semop`, `mkfifo` 등이 없다 |
 | T-04 | 전송 계층 시험 | `scripts/test-transport.sh`가 세 IPC 모두 통과한다(1단계 시험) |
-| T-05 | 1단계 벤치마크 내용 검사 | `bench_<ipc> -V`가 모든 응답의 내용을 확인하고 성공한다 |
+| T-05 | 1단계 벤치마크 내용 검사 | `bench_<ipc> -V`가 모든 응답의 내용을 확인하고 성공한다(클라이언트 1·2·4·8·1024개, 0B~1MB) |
 
 ## 2단계 응용
 
