@@ -13,6 +13,17 @@
  *   - 요청이 PIPE_BUF(4096B) 이하이면 write 한 번으로 보낸다. 커널이 원자성을 보장하므로 잠금이 없다.
  *   - 요청이 PIPE_BUF 를 넘으면(1단계 벤치마크의 큰 메시지) 잠금 파일에 fcntl 쓰기 잠금을 걸고 보낸다.
  *   - 응답은 클라이언트별 mutex 를 잡고 보낸다. 큰 응답이 여러 번의 write 로 나뉘어도 섞이지 않는다.
+ *
+ * 설계 개선 (서버 환경 변수 OSP_PIPE_RBUF=1, 기본값은 처음 설계)
+ *   받기 버퍼: 처음 설계는 메시지마다 머리와 본문을 따로 read 한다(메시지 하나에 read 2번). 켜면 서버 수신 스레드와
+ *   클라이언트 수신 스레드가 FIFO 에 쌓인 바이트를 한 번에 읽어(최대 RBUF_CAP) 사용자 버퍼에서 메시지를 꺼낸다.
+ *   서버가 잠금 파일에 설정을 적고 클라이언트가 읽어 따른다(transport_mq.c 와 같은 방식).
+ * 설계 개선 (서버 환경 변수 OSP_PIPE_RESP=1)
+ *   응답 FIFO 용량: 처음 설계의 응답 FIFO 는 기본 64KB(65,536B)라 가장 큰 응답(SNAPSHOT 65,592B)이 56B 넘친다.
+ *   그래서 64KB 응답마다 워커가 FIFO 에서 잠들고 클라이언트가 비워 줄 때까지 기다린다. 켜면 서버가 응답 FIFO 를
+ *   F_SETPIPE_SZ 로 키운다. 크기는 사용자별 파이프 버퍼 한도(pipe-user-pages-soft)를 서버가 받을 클라이언트 수(-N)로
+ *   나눈 몫 안에서 정하고, 몫이 응답 하나보다 작으면(클라이언트 1024개) 키우지 않는다.
+ *   OSP_PIPE_RESP_SZ=<바이트> 는 원인 확인 실험용으로 크기를 그대로 준다.
  */
 #define _GNU_SOURCE             /* F_GETPIPE_SZ */
 #include <errno.h>
@@ -24,6 +35,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -38,6 +50,14 @@
 #define PATH_LEN 64
 #define WAKE_TYPE 0u          /* tp_server_wake 가 보내는 머리의 type. 실제 메시지는 1 이상이다 */
 #define DRAIN_BUF 4096
+#define CONF_OFF  ((off_t)4096)  /* 잠금 파일에서 설정(conf_t)을 적는 자리 */
+#define RBUF_CAP  65536          /* 받기 버퍼 크기. 요청(40B 이하)이면 1,600개 남짓이 한 번에 들어온다 */
+
+/* 서버가 잠금 파일에 적고 클라이언트가 읽는 설정 */
+typedef struct {
+    uint32_t rbuf;           /* 1 이면 받기 버퍼를 쓴다 */
+    uint32_t reserved;
+} conf_t;
 
 /* ---- 경로 ---- */
 
@@ -243,6 +263,80 @@ static ssize_t recv_msg(int fd, msg_hdr_t *hdr, void *payload, size_t cap)
     return (ssize_t)hdr->payload_len;
 }
 
+/*
+ * 받기 버퍼 (설계 개선, OSP_PIPE_RBUF=1).
+ * FIFO 에 쌓인 바이트를 read 한 번으로 최대 RBUF_CAP 까지 가져와 버퍼에서 메시지를 꺼낸다. 요청이 몰려 있으면
+ * read 한 번에 요청 수백 개가 들어와, 메시지마다 read 2번(머리, 본문)이던 시스템 콜이 메시지 수보다 훨씬 적어진다.
+ * 버퍼에 다 들어오지 않은 큰 본문(64KB SNAPSHOT 응답)은 버퍼에 있는 앞부분만 복사하고 나머지는 받는 쪽 버퍼로
+ * 바로 읽는다. 그래서 큰 메시지의 복사 횟수는 처음 설계와 같다.
+ * DECISION: 버퍼는 수신 스레드 하나만 쓴다(tp_recv_req·tp_recv_resp 는 스레드 하나만 부른다는 transport.h 의 약속).
+ *   그래서 락이 없다. 메모리는 정적 배열이라 측정 구간에 malloc 이 없다(N-7).
+ */
+typedef struct {
+    char  *mem;
+    size_t off, len;         /* 아직 꺼내지 않은 바이트 = mem[off, off + len) */
+} rbuf_t;
+
+static char srv_rb_mem[RBUF_CAP], cli_rb_mem[RBUF_CAP];
+static rbuf_t srv_rb = { srv_rb_mem, 0, 0 }, cli_rb = { cli_rb_mem, 0, 0 };
+static bool srv_rbuf_on, cli_rbuf_on;
+
+static void rb_used(rbuf_t *b, size_t n)
+{
+    b->off += n;
+    b->len -= n;
+    if (b->len == 0) b->off = 0;
+}
+
+/* 버퍼에 적어도 need 바이트(need <= RBUF_CAP)가 모일 때까지 읽는다. read 는 FIFO 에 있는 만큼만 돌려준다 */
+static int rb_fill(int fd, rbuf_t *b, size_t need)
+{
+    if (b->len >= need) return 0;
+    if (b->off + need > RBUF_CAP) {             /* 뒤쪽 자리가 모자라면 남은 바이트를 앞으로 옮긴다 */
+        memmove(b->mem, b->mem + b->off, b->len);
+        b->off = 0;
+    }
+    while (b->len < need) {
+        ssize_t r = read(fd, b->mem + b->off + b->len, RBUF_CAP - b->off - b->len);
+        if (r > 0) { b->len += (size_t)r; continue; }
+        if (r == 0) { errno = ECONNRESET; return -1; }
+        if (errno == EINTR) continue;
+        return -1;
+    }
+    return 0;
+}
+
+/* 본문 n 바이트를 dst 로 꺼낸다(dst 가 NULL 이면 버린다). 버퍼에 없는 나머지가 크면 버퍼를 거치지 않고 바로 읽는다 */
+static int rb_take(int fd, rbuf_t *b, char *dst, size_t n)
+{
+    size_t k = b->len < n ? b->len : n;
+    if (dst) memcpy(dst, b->mem + b->off, k);
+    rb_used(b, k);
+    n -= k;
+    if (n == 0) return 0;
+    if (!dst) return drain(fd, n);
+    if (n >= RBUF_CAP / 4) return read_full(fd, dst + k, n);
+    if (rb_fill(fd, b, n) < 0) return -1;       /* 작은 나머지는 뒤따르는 메시지와 함께 읽히게 버퍼로 */
+    memcpy(dst + k, b->mem + b->off, n);
+    rb_used(b, n);
+    return 0;
+}
+
+/* recv_msg 의 받기 버퍼판. 결과와 errno 는 recv_msg 와 같다 */
+static ssize_t recv_msg_rb(int fd, rbuf_t *b, msg_hdr_t *hdr, void *payload, size_t cap)
+{
+    if (rb_fill(fd, b, sizeof *hdr) < 0) return -1;
+    memcpy(hdr, b->mem + b->off, sizeof *hdr);
+    rb_used(b, sizeof *hdr);
+    if (hdr->payload_len > cap) {
+        if (rb_take(fd, b, NULL, hdr->payload_len) < 0) return -1;
+        errno = EMSGSIZE;
+        return -1;
+    }
+    if (hdr->payload_len && rb_take(fd, b, payload, hdr->payload_len) < 0) return -1;
+    return (ssize_t)hdr->payload_len;
+}
+
 const char *tp_name(void) { return "pipe"; }
 
 /* fork 로 함께 띄울 때의 준비. FIFO 는 경로 이름으로 만나므로 할 일이 없다 */
@@ -261,6 +355,8 @@ static pthread_mutex_t srv_resp_mtx[MAX_CLIENTS];
 static atomic_bool srv_stopping;
 static int srv_opened;
 static uint32_t lim_clients = 16;                /* tp_set_limits. 부르지 않으면 1단계 값 */
+static size_t lim_resp;                          /* tp_set_limits 의 가장 큰 응답(머리 포함). 0 이면 모름 */
+static int srv_resp_sz;                          /* 응답 FIFO 를 키울 크기. 0 이면 그대로 (설계 개선) */
 
 /*
  * 클라이언트 수만 쓴다. 서버는 응답 FIFO 를 클라이언트마다 하나씩 열어 두므로, 열린 파일 한도(터미널 기본 soft 1024)가
@@ -274,7 +370,41 @@ int tp_set_limits(uint32_t max_clients, size_t max_req, size_t max_resp)
         return -1;
     }
     lim_clients = max_clients;
+    lim_resp = max_resp;
     return 0;
+}
+
+static long read_proc_long(const char *path)
+{
+    long v = -1;
+    FILE *f = fopen(path, "r");
+    if (f) {
+        if (fscanf(f, "%ld", &v) != 1) v = -1;
+        fclose(f);
+    }
+    return v;
+}
+
+/*
+ * 응답 FIFO 를 키울 크기 (설계 개선, 서버를 열 때 한 번 정한다).
+ * 사용자별 파이프 버퍼 한도를 넘으면 새 FIFO 가 8KB 로 만들어지고 F_SETPIPE_SZ 도 거부된다(클라이언트 1024개의 처음 설계).
+ * 그래서 한도의 7/8 을 서버가 받을 클라이언트 수로 나눈 몫 안에서 2의 거듭제곱으로 고른다(최대 pipe-max-size).
+ * 나머지 1/8 은 요청 FIFO 와 이 사용자의 다른 파이프 몫이다. 몫이 가장 큰 응답 하나보다 작으면 키우지 않는다(0).
+ */
+static int pick_resp_size(void)
+{
+    const char *fixed = getenv("OSP_PIPE_RESP_SZ");             /* 원인 확인 실험: 크기를 그대로 */
+    if (fixed && atoi(fixed) > 0) return atoi(fixed);
+    const char *on = getenv("OSP_PIPE_RESP");
+    if (!on || atoi(on) != 1) return 0;
+    long page = sysconf(_SC_PAGESIZE);
+    long soft = read_proc_long("/proc/sys/fs/pipe-user-pages-soft");   /* 0 = 한도 없음 */
+    long maxsz = read_proc_long("/proc/sys/fs/pipe-max-size");
+    if (page <= 0 || soft < 0 || maxsz <= 0) return 0;
+    long share = soft > 0 ? soft * page / 8 * 7 / (long)lim_clients : maxsz;
+    long sz = page;
+    while (sz * 2 <= share && sz * 2 <= maxsz) sz *= 2;
+    return sz >= (long)lim_resp && sz > 65536 ? (int)sz : 0;
 }
 
 /* 열린 파일 한도를 클라이언트 수 + 여유 64개 이상으로 올린다. hard 한도가 모자라면 그대로 두고 0 (열 때 EMFILE 로 알게 된다) */
@@ -307,6 +437,14 @@ int tp_server_open(void)
         errno = e;
         return -1;
     }
+
+    /* 설계 개선 설정. 클라이언트가 읽을 수 있게 요청 FIFO 를 열기 전에 잠금 파일에 적는다 */
+    const char *rb = getenv("OSP_PIPE_RBUF");
+    conf_t conf = { .rbuf = rb && atoi(rb) == 1 };
+    srv_rbuf_on = conf.rbuf;
+    srv_rb.off = srv_rb.len = 0;
+    srv_resp_sz = pick_resp_size();
+    if (pwrite(srv_lock_fd, &conf, sizeof conf, CONF_OFF) != (ssize_t)sizeof conf) goto fail;
 
     /*
      * O_RDWR 로 연다. 서버 자신이 쓰는 쪽도 되므로
@@ -362,7 +500,8 @@ ssize_t tp_recv_req(msg_hdr_t *hdr, void *payload, size_t cap)
 {
     if (atomic_load(&srv_stopping)) { errno = ECANCELED; return -1; }
 
-    ssize_t n = recv_msg(srv_req_fd, hdr, payload, cap);
+    ssize_t n = srv_rbuf_on ? recv_msg_rb(srv_req_fd, &srv_rb, hdr, payload, cap)
+                            : recv_msg(srv_req_fd, hdr, payload, cap);
     if (n < 0) return -1;
 
     if (hdr->type == WAKE_TYPE) { errno = ECANCELED; return -1; }
@@ -401,6 +540,8 @@ static int open_resp(uint32_t id)
         errno = e;
         return -1;
     }
+    /* 설계 개선: 가장 큰 응답이 통째로 들어가게 키운다. 거부되면(한도) 그대로 쓴다. 실제 크기는 tp_server_info 가 기록 */
+    if (srv_resp_sz > 0) (void)fcntl(fd, F_SETPIPE_SZ, srv_resp_sz);
     return fd;
 }
 
@@ -555,6 +696,10 @@ int tp_client_open(uint32_t client_id)
         if (errno == ENOENT) errno = ECONNREFUSED;
         return -1;
     }
+    /* 서버가 적어 둔 설계 개선 설정. 처음 설계의 서버(설정 없음)면 읽은 바이트가 모자라 끈다 */
+    conf_t conf;
+    cli_rbuf_on = pread(cli_lock_fd, &conf, sizeof conf, CONF_OFF) == (ssize_t)sizeof conf && conf.rbuf == 1;
+    cli_rb.off = cli_rb.len = 0;
     if (start_lock(cli_lock_fd) < 0 || make_fifo(mp) < 0) {
         /* 같은 번호가 실행 중이면 EADDRINUSE. 그 클라이언트의 FIFO 이므로 지우지 않는다. 닫으면 flock 도 풀린다 */
         int e = errno;
@@ -638,8 +783,9 @@ static int wait_first_resp(void)
 /* 응답 1개 받기. 수신 스레드 하나만 부른다. 서버가 끝나면 -1, errno = ECONNRESET */
 ssize_t tp_recv_resp(msg_hdr_t *hdr, void *payload, size_t cap)
 {
-    if (atomic_load(&cli_keeper_fd) >= 0 && wait_first_resp() < 0) return -1;
-    ssize_t n = recv_msg(cli_resp_fd, hdr, payload, cap);
+    if (atomic_load(&cli_keeper_fd) >= 0 && cli_rb.len == 0 && wait_first_resp() < 0) return -1;
+    ssize_t n = cli_rbuf_on ? recv_msg_rb(cli_resp_fd, &cli_rb, hdr, payload, cap)
+                            : recv_msg(cli_resp_fd, hdr, payload, cap);
     if (n >= 0 || errno == EMSGSIZE) {
         int k = atomic_exchange(&cli_keeper_fd, -1);
         if (k >= 0) close(k);
