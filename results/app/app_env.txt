@@ -214,3 +214,86 @@ load 2.04 3.13 7.89 1/1262 1085798
       3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_wo+
       4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker+
       5 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker+
+=== 2026-11-28T11:42:59+09:00 commit 49843ed, EXPS="cause-pipe imp-pipe target-ph imp-target-ph", REPS=30, IPCS="pipe mq shm"
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      25%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       5.5Gi       3.1Gi       1.7Gi       8.7Gi       9.8Gi
+Ubuntu 26.04.1 LTS
+7.0.0-44-generic
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+virt: none
+governor: powersave
+msgmax 8192 msgmnb 16384 msgmni 32000 sem 32000	1024000000	500	32000
+pipe-max-size 1048576 pipe-user-pages-soft 16384 ulimit-n 524288/524288
+load 0.25 0.89 1.51 1/1259 1394612
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  40067 movingg+  20   0 5819480   1.0g   1.0g S   9.1   6.7  73:11.48 qemu-sy+
+1394613 movingg+  20   0    7776   5392   3324 R   9.1   0.0   0:00.02 top
+      1 root      20   0   27192  15204   9572 S   0.0   0.1   0:07.61 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.09 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_wo+
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker+
+      5 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker+
+=== 2026-11-28T14:11:42+09:00 commit ca95b7b, EXPS="imp-all target-all cause-scan", REPS=30, IPCS="pipe mq shm"
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      18%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       6.5Gi       2.4Gi       2.3Gi       9.3Gi       8.8Gi
+Ubuntu 26.04.1 LTS
+7.0.0-44-generic
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+virt: none
+governor: powersave
+power: ADP1 online=1 BAT1 Not charging 100%, profile balanced
+msgmax 8192 msgmnb 16384 msgmni 32000 sem 32000	1024000000	500	32000
+pipe-max-size 1048576 pipe-user-pages-soft 16384 ulimit-n 524288/524288
+load 0.14 0.54 5.21 1/1302 3643021
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  40067 movingg+  20   0 5819480   1.0g   1.0g S   9.1   6.6  82:56.21 qemu-sy+
+ 494601 movingg+  20   0 2491052 285312 163212 S   9.1   1.8   5:26.01 ptyxis
+3643022 movingg+  20   0    7776   5416   3348 R   9.1   0.0   0:00.02 top
+      1 root      20   0   27192  15204   9572 S   0.0   0.1   0:08.69 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.10 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_wo+
+      4 root       0 -20       0      0      0 I   0.0   0.0   0:00.00 kworker+
+=== 2026-11-28T15:24:38+09:00 commit ca95b7b, EXPS="imp-all target-all cause-scan", REPS=30, IPCS="pipe mq shm"
+CPU(s):                                  12
+Model name:                              Intel(R) Core(TM) 5 120U
+Thread(s) per core:                      2
+Core(s) per socket:                      10
+Socket(s):                               1
+CPU(s) scaling MHz:                      28%
+CPU max MHz:                             5000.0000
+CPU min MHz:                             400.0000
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       6.3Gi       2.4Gi       2.3Gi       9.4Gi       9.0Gi
+Ubuntu 26.04.1 LTS
+7.0.0-44-generic
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+virt: none
+governor: powersave
+power: ADP1 online=1 BAT1 Not charging 100%, profile balanced
+msgmax 8192 msgmnb 16384 msgmni 32000 sem 32000	1024000000	500	32000
+pipe-max-size 1048576 pipe-user-pages-soft 16384 ulimit-n 524288/524288
+load 3.84 12.72 18.25 1/1278 1362555
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   8132 movingg+  20   0   53.0g  80192  73784 S  16.7   0.5  77:34.37 claude-+
+   8454 movingg+  20   0 1454.1g   1.1g 163592 S   8.3   7.2  70:43.30 claude-+
+  40067 movingg+  20   0 5819480   1.1g   1.0g R   8.3   6.9  86:17.10 qemu-sy+
+ 181550 root       0 -20       0      0      0 I   8.3   0.0   0:07.16 kworker+
+      1 root      20   0   27192  15204   9572 S   0.0   0.1   0:09.08 systemd
+      2 root      20   0       0      0      0 S   0.0   0.0   0:00.11 kthreadd
+      3 root      20   0       0      0      0 S   0.0   0.0   0:00.00 pool_wo+

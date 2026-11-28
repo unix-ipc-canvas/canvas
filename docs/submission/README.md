@@ -9,6 +9,7 @@
 | 제출물 | 파일 | 만드는 방법 |
 | --- | --- | --- |
 | 최종보고서 | `docs/submission/최종보고서.docx` | [최종보고서 서식](../assignment/UNIX시스템프로그래밍_설계과제_최종보고서서식.docx)의 목차와 항목 순서 그대로 |
+| 최종보고서 별책 부록 | `docs/submission/최종보고서_부록_소스코드.docx` | 9장 부록의 프로그램 소스 전체와 측정·시험 스크립트 전체(분량이 커서 별책) |
 | 소스 | `osproject_2.tar` | `make dist` (`tar cvf osproject_2.tar ...`) |
 | 발표자료 | `docs/submission/발표자료.pptx` | 서식의 [별첨] 구성 그대로 |
 | 발표 대본 | `docs/submission/발표대본.md` | 슬라이드마다 |

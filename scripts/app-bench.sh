@@ -18,6 +18,15 @@
 #   cause-mix                     원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 요청 종류만 DRAW만 / SNAPSHOT만으로 바꾼다
 #   cause-ring                    원인 확인(P3, 본 측정 뒤 추가): thr 조건에서 shm 응답 링 칸 수만 34·68·136 으로 바꾼다
 #                                 (넷 다 기본 목록에 없다. EXPS="cause-workers cause-lockw cause-mix cause-ring" 로 따로 돌린다)
+#   cause-pipe                    원인 확인(pipe, 11/28 추가): 요청 받기 방식(OSP_PIPE_RBUF)과 응답 FIFO 용량(OSP_PIPE_RESP_SZ)만 바꾼다
+#   imp-all                       개선 전후(11/28 추가): 세 IPC 를 같은 조건 목록으로, 처음 설계와 개선(IMP_ENV)을 한 반복 안에서
+#                                 번갈아 잰다. 클라이언트 1·64·256·1024 와 처리량(thr) 조건
+#   target-all                    목표 부하의 개선 전후(11/28 추가): 처음 설계와 개선을 한 반복 안에서 번갈아 잰다. 보내는 위상은
+#                                 클라이언트 번호로 흩는다(target·imp-target 은 처음처럼 위상을 맞춘다, 클라이언트 -A)
+#                                 (셋 다 기본 목록에 없다. EXPS="imp-all target-all cause-scan", cause-pipe 는 따로)
+#   cause-scan                    개선의 대가 원인 확인(shm, 11/28 추가): thr 조건에서 요청 링 방식(공용 / 클라이언트별)과
+#                                 서버가 받을 클라이언트 수(-N 1024 / 16)만 바꾼다. 클라이언트별 링은 받을 때 -N 개 링을 훑는다
+#                                 (기본 목록에 없다. EXPS="cause-scan" 로 따로 돌린다. -N 은 CSV 의 env 열에 "-N=값"으로 남긴다)
 #
 # 실행 하나: 서버를 새로 띄우고 → 실행기가 클라이언트 N개를 워밍업시킨 뒤 함께 시작 → 끝나면 검증기로 정답을 만들어
 # 두고 서버를 SIGINT 로 끝낸다. 서버는 정답과 그림판 체크섬을 비교해 CSV 서버 줄의 checksum_ok 에 남긴다.
@@ -34,6 +43,42 @@ if [ -n "$(git status --porcelain -- src include Makefile 2>/dev/null)" ] && [ -
     echo "커밋하지 않은 코드 변경이 있다. 커밋한 코드로만 잰다 (시험 삼아 돌릴 때는 ALLOW_DIRTY=1)" >&2
     exit 1
 fi
+
+# 전원. 노트북은 배터리로 돌면 CPU 전력 한도가 낮아져 처리량이 절반 아래로 떨어진다(11/28 13:07 측정 중에 어댑터가 빠져 겪었다).
+# 어댑터(Mains)가 연결되고 배터리가 완충일 때만 재고, 측정 중에 바뀌면 그 자리에서 멈춘다. 어댑터가 없는 컴퓨터(데스크톱, CI)는 연결된 것으로 본다
+ac_online() {
+    local p found=0
+    for p in /sys/class/power_supply/*; do
+        [ "$(cat "$p/type" 2>/dev/null)" = Mains ] || continue
+        found=1
+        [ "$(cat "$p/online" 2>/dev/null)" = 1 ] && return 0
+    done
+    [ $found -eq 0 ]
+}
+# 어댑터가 연결되어 있고 배터리가 충전 중이 아니다(완충). 충전 중에는 전력·발열이 달라 그 상태로는 재지 않는다
+power_ok() {
+    ac_online || return 1
+    local p
+    for p in /sys/class/power_supply/*; do
+        [ "$(cat "$p/type" 2>/dev/null)" = Battery ] || continue
+        case $(cat "$p/status" 2>/dev/null) in Charging|Discharging) return 1 ;; esac
+    done
+    return 0
+}
+power_desc() {
+    local p out=""
+    for p in /sys/class/power_supply/*; do
+        case $(cat "$p/type" 2>/dev/null) in
+        Mains)   out="$out $(basename "$p") online=$(cat "$p/online" 2>/dev/null)" ;;
+        Battery) out="$out $(basename "$p") $(cat "$p/status" 2>/dev/null) $(cat "$p/capacity" 2>/dev/null)%" ;;
+        esac
+    done
+    echo "${out# }"
+}
+if ! power_ok && [ -z "${ALLOW_BATTERY:-}" ]; then
+    echo "전원 어댑터 연결 + 완충 상태가 아니다($(power_desc)). 그 상태에서 잰다 (시험 삼아 돌릴 때는 ALLOW_BATTERY=1)" >&2
+    exit 1
+fi
 export BENCH_COMMIT=${BENCH_COMMIT:-$(git rev-parse --short HEAD)}
 make -s app > /dev/null || { echo "빌드 실패" >&2; exit 1; }
 mkdir -p "$OUT"
@@ -47,7 +92,7 @@ conds_for() {
     thr)    echo "-K 1|1|-f 16|1|" ;;
     scale)  for m in 90 100; do for n in 1 4 16 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m $m -f 1|$d|"; done; done ;;
     lock)   for l in rw room; do for n in 16 64 256; do echo "-K 1 -l $l|$n|-f 1|2|"; done; done ;;
-    target) echo "-K 8|1024|-H 67 -f 4|3|" ;;
+    target) echo "-K 8|1024|-H 67 -f 4 -A|3|" ;;
     cause-procs) echo "-K 8|64|-m 90 -f 16|3|"; echo "-K 8|256|-m 90 -f 4|3|"; echo "-K 8|1024|-m 90 -f 1|3|" ;;
     imp-mq-q)    for q in 1 2 4 8; do echo "-K 8|1024|-m 90 -f 1|3|OSP_MQ_RESP_Q=$q"; done ;;
     imp-mq-req)  echo "-K 8|256|-m 90 -f 1|3|OSP_MQ_RESP_Q=8"
@@ -56,25 +101,36 @@ conds_for() {
                  echo "-K 8|1024|-m 90 -f 1|3|OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1" ;;
     imp-scale)   echo "-K 8|1024|-m 90 -f 1|3|"
                  for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done ;;
-    imp-target)  echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
+    imp-target)  echo "-K 8|1024|-H 67 -f 4 -A|3|$IMP_ENV" ;;
+    target-all)    echo "-K 8|1024|-H 67 -f 4|3|"; echo "-K 8|1024|-H 67 -f 4|3|$IMP_ENV" ;;
+    cause-pipe)    for e in "" OSP_PIPE_RBUF=1 OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-f 16|1|$e"; done
+                   for e in "" OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-m 0 -f 16|1|$e"; done
+                   for e in "" OSP_PIPE_RBUF=1; do echo "-K 1|1|-m 100 -f 16|1|$e"; done
+                   for e in "" OSP_PIPE_RESP_SZ=131072 OSP_PIPE_RESP_SZ=1048576; do echo "-K 1|1|-m 0 -S 256 -f 1|1|$e"; done ;;
+    imp-all)       for n in 1 64 256 1024; do d=2; [ "$n" -ge 256 ] && d=3
+                       echo "-K 8|$n|-m 90 -f 1|$d|"; echo "-K 8|$n|-m 90 -f 1|$d|$IMP_ENV"; done
+                   echo "-K 1|1|-f 16|1|"; echo "-K 1|1|-f 16|1|$IMP_ENV" ;;
     mem-shm)     for f in 1 4; do for c in 34 17; do echo "-K 8|1024|-m 90 -f $f|3|OSP_SHM_REQ=per OSP_SHM_RESP_CHUNKS=$c"; done; done ;;
     cause-workers) for wk in 1 2 4 8; do echo "-K 1 -w $wk|1|-f 16|1|"; done ;;
     cause-lockw)   for wk in 1 4 16; do echo "-K 1 -l room -w $wk|64|-f 1|2|"; done ;;
     cause-mix)     echo "-K 1|1|-m 100 -f 16|1|"; echo "-K 1|1|-m 0 -f 16|1|" ;;
     cause-ring)    for c in 34 68 136; do echo "-K 1|1|-f 16|1|OSP_SHM_RESP_CHUNKS=$c"; done ;;
+    cause-scan)    for nn in 1024 16; do for e in "" OSP_SHM_REQ=per; do echo "-K 1 -N $nn|1|-f 16|1|$e"; done; done ;;
     *)      v="COND_${1//-/_}"; [ -n "${!v:-}" ] && printf '%s\n' "${!v}" | tr ';' '\n' ;;
     esac
 }
 
 # 개선한 설계 (서버에만 준다. 각 서버는 자기 IPC 의 변수만 읽는다)
-IMP_ENV="OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 OSP_SHM_REQ=per"
+# pipe 의 두 변수는 11/28 에 더했다. 그 전에 잰 imp-scale·imp-target 은 pipe 를 재지 않아 이 변수들과 관계없다
+IMP_ENV="OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1 OSP_SHM_REQ=per OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1"
 
 # 실험마다 재는 IPC. 개선·메모리 실험은 그 개선이 있는 IPC 만 (T-42 도 이렇게 센다)
 ipcs_for() {
     case $1 in
     imp-mq-q|imp-mq-req)  echo "mq" ;;
     imp-scale|imp-target) echo "mq shm" ;;
-    mem-shm|cause-ring)   echo "shm" ;;
+    mem-shm|cause-ring|cause-scan) echo "shm" ;;
+    cause-pipe)           echo "pipe" ;;
     *)                    echo "$IPCS" ;;
     esac
 }
@@ -101,6 +157,7 @@ record_env() {
         gcc --version | head -1
         echo "virt: $(systemd-detect-virt 2>/dev/null || true)"
         echo "governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+        echo "power: $(power_desc), profile $(powerprofilesctl get 2>/dev/null || echo -)"
         echo "msgmax $(cat /proc/sys/kernel/msgmax) msgmnb $(cat /proc/sys/kernel/msgmnb) msgmni $(cat /proc/sys/kernel/msgmni) sem $(cat /proc/sys/kernel/sem)"
         echo "pipe-max-size $(cat /proc/sys/fs/pipe-max-size) pipe-user-pages-soft $(cat /proc/sys/fs/pipe-user-pages-soft) ulimit-n $(ulimit -n)/$(ulimit -Hn)"
         echo "load $(cat /proc/loadavg)"
@@ -111,12 +168,17 @@ record_env() {
 fails=0; runs=0
 run_one() {
     local exp=$1 ipc=$2 rep=$3 sopts=$4 n=$5 copts=$6 dur=$7 senv=$8
-    local rooms lock workers tile warm
+    local rooms lock workers tile warm maxc note
+    if ! power_ok && [ -z "${ALLOW_BATTERY:-}" ]; then
+        echo "  중단: 측정 중에 전원 상태가 바뀌었다($exp 반복 $rep, $(date +%T), $(power_desc)). 이 측정의 원자료는 쓰지 않는다"
+        record_env; exit 3
+    fi
     rooms=$(optval -K 8 $sopts); lock=$(optval -l rw $sopts); workers=$(optval -w 4 $sopts); tile=$(optval -t 64 $sopts)
+    maxc=$(optval -N "" $sopts); note=${senv// /;}; [ -n "$maxc" ] && note="${note:+$note;}-N=$maxc"   # 서버 -N 을 준 실험(cause-scan)만 env 열에 남긴다
     warm=200; [ "$n" -ge 256 ] && warm=50
     export OSP_IPC=$ipc OSP_CLIENTS=$n OSP_WORKERS=$workers OSP_LOCK=$lock OSP_TILE=$tile
     export OSP_INFLIGHT=$(optval -f 1 $copts) OSP_RATE=$(optval -H 0 $copts) OSP_DRAW_PCT=$(optval -m 90 $copts)
-    export OSP_RECT=$(optval -r 16 $copts) OSP_SNAP=$(optval -S 256 $copts) OSP_ENV_NOTE=${senv// /;}
+    export OSP_RECT=$(optval -r 16 $copts) OSP_SNAP=$(optval -S 256 $copts) OSP_ENV_NOTE=$note
     rm -f "$tmp/expect" "$tmp/man"
     env $senv "bin/server_$ipc" $sopts -p - -O "$OUT/$exp.csv" -e "$exp" -R "$rep" -X "$tmp/expect" > "$tmp/srv.out" 2> "$tmp/srv.err" &
     local sp=$! ok=0
@@ -142,12 +204,12 @@ run_one() {
         echo "  실패: 실행기 $lrc 서버 $src 체크섬 $same | $(head -c 300 "$tmp/lg.out")"
         make -s ipcclean > /dev/null 2>&1
     fi
-    printf '  [%s %d/%d] %-4s N=%-4s %-22s %s| 체크섬 %s\n' "$exp" "$rep" "$REPS" "$ipc" "$n" "$copts${senv:+ $senv}" "$line" "$same"
+    printf '  [%s %d/%d] %-4s N=%-4s %-22s %s| 체크섬 %s\n' "$exp" "$rep" "$REPS" "$ipc" "$n" "$copts${senv:+ $senv}${maxc:+ (서버 -N $maxc)}" "$line" "$same"
 }
 
 record_env
 start=$(date +%s)
-echo "측정 시작: 커밋 $BENCH_COMMIT, 실험 [$EXPS], 반복 $REPS, 결과 $OUT/"
+echo "측정 시작: 커밋 $BENCH_COMMIT, 실험 [$EXPS], 반복 $REPS, 결과 $OUT/, 전원 $(power_desc)"
 for exp in $EXPS; do
     mapfile -t CONDS < <(conds_for "$exp")
     [ ${#CONDS[@]} -gt 0 ] || { echo "실험 $exp 의 조건이 없다" >&2; continue; }
@@ -157,7 +219,12 @@ for exp in $EXPS; do
         # 반복마다 IPC 순서를 돌린다 (pipe mq shm → mq shm pipe → shm pipe mq)
         read -r -a order <<< "$exp_ipcs"
         k=$(( (rep - 1) % ${#order[@]} )); order=("${order[@]:k}" "${order[@]:0:k}")
-        for c in "${CONDS[@]}"; do
+        conds=("${CONDS[@]}")
+        # 전후·원인을 번갈아 재는 실험은 짝수 반복에서 조건 순서를 거꾸로 (순서의 영향을 상쇄)
+        if [[ " imp-all target-all cause-scan " == *" $exp "* ]] && (( rep % 2 == 0 )); then
+            conds=(); for ((ci = ${#CONDS[@]} - 1; ci >= 0; ci--)); do conds+=("${CONDS[ci]}"); done
+        fi
+        for c in "${conds[@]}"; do
             IFS='|' read -r sopts n copts dur senv <<< "$c"
             for ipc in "${order[@]}"; do run_one "$exp" "$ipc" "$rep" "$sopts" "$n" "$copts" "$dur" "$senv"; done
         done

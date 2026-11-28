@@ -36,6 +36,8 @@ KEYS = ('clients', 'rooms', 'inflight', 'rate_hz', 'workers', 'lock', 'tile', 'd
 TEXT = ('ipc', 'role', 'experiment', 'commit', 'lock', 'env')
 # 개선한 설계 (app-bench.sh 의 IMP_ENV). 각 서버는 자기 IPC 의 변수만 읽는다
 IMP_ENV = 'OSP_MQ_RESP_Q=8;OSP_MQ_ADMIT=1;OSP_SHM_REQ=per'
+# 11/28 에 pipe 개선을 더한 묶음 (imp-all, target-all). 그 전의 imp-scale·imp-target 은 IMP_ENV
+IMP_ENV2 = IMP_ENV + ';OSP_PIPE_GROW=1;OSP_PIPE_ASYNC=1'
 TARGET_HZ = 67   # 사람 한 명의 요청 속도 (워크로드 명세)
 FRAME_US = 16700  # 요구사항 N-2: DRAW 상위 99% 가 한 프레임(16.7ms) 이하
 
@@ -146,7 +148,7 @@ def env_label(env):
     """서버 환경 변수를 사람이 읽는 이름으로"""
     if not env:
         return ''
-    if env == IMP_ENV:
+    if env in (IMP_ENV, IMP_ENV2):
         return '개선한 설계'
     kv = dict(x.split('=', 1) for x in env.split(';') if '=' in x)
     s = []
@@ -160,6 +162,16 @@ def env_label(env):
         s.append('클라이언트별 요청 링')
     if 'OSP_SHM_RESP_CHUNKS' in kv:
         s.append(f"응답 링 {kv['OSP_SHM_RESP_CHUNKS']}칸")
+    if kv.get('OSP_PIPE_GROW') == '1':
+        s.append('응답 FIFO 키우기')
+    if kv.get('OSP_PIPE_ASYNC') == '1':
+        s.append('송신 스레드')
+    if kv.get('OSP_PIPE_RBUF') == '1':
+        s.append('받기 버퍼')
+    if 'OSP_PIPE_RESP_SZ' in kv:
+        s.append(f"응답 FIFO {int(kv['OSP_PIPE_RESP_SZ']) // 1024}KB")
+    if '-N' in kv:
+        s.append(f"서버 -N {kv['-N']}")
     return ' + '.join(s) or env
 
 
@@ -323,8 +335,18 @@ table_basic('cause-mix', '원인 확인: 요청 종류만 바꿈 — DRAW만 / S
 table_segments('cause-mix', '요청 종류별 구간별 시간')
 table_basic('cause-ring', '원인 확인: shm 응답 링 칸 수만 바꿈 34 / 68 / 136 (클라이언트 1, 동시 요청 16, 기준 혼합) — P3')
 table_memory('cause-ring', 'shm 응답 링 칸 수별 메모리')
+table_basic('cause-scan', '개선의 대가 원인 확인(shm): 요청 링 방식(공용 / 클라이언트별)과 서버가 받을 클라이언트 수(-N 1024 / 16)만 바꿈 (클라이언트 1, 동시 요청 16) (11/28)')
+table_segments('cause-scan', 'shm 링 훑기 확인의 구간별 시간')
+table_basic('target-all', f'목표 부하의 개선 전후, 보내는 위상을 흩음 (클라이언트 1024개가 초당 {TARGET_HZ}개씩, 동시 4, 한 반복 안에서 번갈아) — P8, N-2 (11/28)')
+table_segments('target-all', '목표 부하 개선 전후의 구간별 시간')
+table_basic('cause-pipe', '원인 확인(pipe): 받기 버퍼 / 응답 FIFO 용량만 바꿈 (클라이언트 1, 그림판 1) (11/28)')
+table_segments('cause-pipe', 'pipe 원인 확인의 구간별 시간')
+table_memory('cause-pipe', 'pipe 원인 확인의 메모리 (응답 FIFO 크기)')
+table_basic('imp-all', '세 IPC 개선 전후 (같은 반복 안에서 번갈아): 클라이언트 1·64·256·1024(기준 혼합, 동시 1, 그림판 8)와 클라이언트 1·동시 16 (11/28) — N-6')
+table_segments('imp-all', '세 IPC 개선 전후의 구간별 시간')
+table_memory('imp-all', '세 IPC 개선 전후의 메모리')
 KNOWN = ('type', 'thr', 'scale', 'lock', 'target', 'cause-procs', 'imp-mq-q', 'imp-mq-req', 'imp-scale', 'imp-target', 'mem-shm', 'cause-workers', 'cause-lockw',
-         'cause-mix', 'cause-ring')
+         'cause-mix', 'cause-ring', 'target-all', 'cause-pipe', 'imp-all', 'cause-scan')
 for exp in sorted(e for e in data if e not in KNOWN):
     table_basic(exp, f'실험 {exp}')
     table_segments(exp, f'실험 {exp} 구간별 시간')
@@ -580,7 +602,7 @@ if 'imp-scale' in data:
         before = sorted((int(d['clients']), med(by[i], lambda r: r['thr_req_s']), med(by[i], lambda r: r['draw_p99_us']))
                         for d, by in items('scale', draw_pct='90') if i in by and d['clients'] in ('1', '64', '256', '1024'))
         if before:
-            lab = f'{i} 처음 설계' if i != 'pipe' else 'pipe (개선 없음)'
+            lab = f'{i} 처음 설계' if i != 'pipe' else 'pipe 처음 설계 (이 실험은 mq·shm만 개선)'
             ax[0].plot([p[0] for p in before], [p[1] for p in before], ls='--' if i != 'pipe' else '-', marker=MARK[i], color=COLOR[i], alpha=.6 if i != 'pipe' else 1, label=lab)
             ax[1].plot([p[0] for p in before], [p[2] for p in before], ls='--' if i != 'pipe' else '-', marker=MARK[i], color=COLOR[i], alpha=.6 if i != 'pipe' else 1, label=lab)
         after = sorted((int(d['clients']), med(by[i], lambda r: r['thr_req_s']), med(by[i], lambda r: r['draw_p99_us']))
@@ -593,6 +615,22 @@ if 'imp-scale' in data:
     for a in ax:
         client_axis(a, (1, 64, 256, 1024)); a.set_xlabel('동시 클라이언트 수'); a.grid(alpha=.3); a.legend(fontsize=7)
     save(fig, 'imp_scale.png')
+
+if 'imp-all' in data:
+    # 세 IPC 개선 전후 (같은 반복 안에서 번갈아 잼): 처리량과 전체 요청 상위 99%
+    fig, ax = plt.subplots(1, 2, figsize=(11, 4))
+    for i in IPCS:
+        for env, ls, lw, alpha, tag in (('', '--', 1.2, .65, '처음 설계'), (IMP_ENV2, '-', 2, 1, '개선')):
+            pts = sorted((int(d['clients']), med(by[i], lambda r: r['thr_req_s']), med(by[i], lambda r: r['lat_p99_us']))
+                         for d, by in items('imp-all', env=env, inflight='1') if i in by)
+            if pts:
+                ax[0].plot([p[0] for p in pts], [p[1] for p in pts], ls=ls, lw=lw, alpha=alpha, marker=MARK[i], color=COLOR[i], label=f'{i} {tag}')
+                ax[1].plot([p[0] for p in pts], [p[2] for p in pts], ls=ls, lw=lw, alpha=alpha, marker=MARK[i], color=COLOR[i], label=f'{i} {tag}')
+    ax[0].set_ylabel('처리량 (req/s)'); ax[0].set_title('개선 전후 처리량 (기준 혼합, 동시 1, 그림판 8)')
+    ax[1].set_ylabel('전체 요청 왕복 지연 상위 99% (µs)'); ax[1].set_yscale('log'); ax[1].set_title('개선 전후 상위 99%')
+    for a in ax:
+        client_axis(a, (1, 64, 256, 1024)); a.set_xlabel('동시 클라이언트 수'); a.grid(alpha=.3); a.legend(fontsize=7, ncol=2)
+    save(fig, 'imp_all.png')
 
 if 'mem-shm' in data:
     groups = []

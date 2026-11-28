@@ -123,7 +123,7 @@ sequenceDiagram
 | `thr` | (기준 혼합의 처리량) | 클라이언트 1, 동시 요청 16, 그림판 1 | 30 | P3 |
 | `scale` | 클라이언트 1, 4, 16, 64, 256, 1024 × 기준 혼합 / DRAW만 | 동시 요청 1, 그림판 8 | 30 | P4, P5, P7 |
 | `lock` | 락 `rw` / `room` × 클라이언트 16, 64, 256 | 기준 혼합, 동시 요청 1, 그림판 1 | 30 | P6 |
-| `target` | (사람 속도 부하) 클라이언트마다 `-H 67`, 동시 요청 4 | 클라이언트 1024, 그림판 8 | 30 | P8, 요구사항 N-2 |
+| `target` | (사람 속도 부하) 클라이언트마다 `-H 67`, 동시 요청 4. 위상을 맞춤(`-A`) | 클라이언트 1024, 그림판 8 | 30 | P8, 요구사항 N-2 |
 
 원인 확인과 설계 개선 실험(11/28 추가). 구현을 마친 뒤 시험 삼아 돌린 측정(원자료로 쓰지 않음)에서 클라이언트 1024개의 mq·shm 처리량이 64개일 때보다 크게 떨어져, 그 원인을 가리는 실험과 개선 전후 실험을 본 측정에 함께 넣었다. 개선은 서버 환경 변수로 켜고 끄므로 같은 실행 파일로 잰다(기본값 = 처음 설계).
 
@@ -133,18 +133,24 @@ sequenceDiagram
 | `imp-mq-q` | mq 응답 큐 수 Q = 1, 2, 4, 8 (`OSP_MQ_RESP_Q`) | 클라이언트 1024, 기준 혼합, 동시 요청 1 | mq | 응답 큐 하나에 수신자가 몰리는 것이 원인인지 + 개선 1 |
 | `imp-mq-req` | 요청 큐 용량 16,384B / 8,192B(`OSP_MQ_REQ_QBYTES`) × 입장 제한 없음 / 있음(`OSP_MQ_ADMIT=1`) | 응답 큐 8개, 클라이언트 256(용량 8,192B면 띄운 요청 > 큐에 들어가는 요청), 1024 | mq | 응답 큐를 나눈 뒤 드러난 요청 큐 병목의 원인(가득 찬 큐에서 막힌 송신자를 커널이 한꺼번에 깨움) + 개선 2 |
 | `imp-scale` | 처음 설계(클라이언트 1024) / 개선한 설계(클라이언트 1, 64, 256, 1024) | 기준 혼합, 동시 요청 1, 그림판 8 | mq, shm | 개선 전후(요구사항 N-6), 클라이언트가 적을 때 손해가 없는지 |
-| `imp-target` | (사람 속도 부하) 개선한 설계 | `target`과 같음 | mq, shm | 개선 뒤 요구사항 N-2 |
+| `imp-target` | (사람 속도 부하) 개선한 설계, 위상을 맞춤(`-A`) | `target`과 같음 | mq, shm | 개선 뒤 요구사항 N-2 |
 | `mem-shm` | shm 응답 링 칸 수 34(응답 2개) / 17(응답 1개) × 동시 요청 1, 4 | 클라이언트 1024, 개선한 요청 링 | shm | 메모리 절감 방안 2(요구사항 N-5, [구현 계획의 미결정](../design/plan.md#리스크와-미결정)) |
 | `cause-workers` (본 측정 뒤 추가) | 서버 워커 수 1, 2, 4, 8 (`-w`) | `thr`와 같음(클라이언트 1, 동시 요청 16, 기준 혼합, 그림판 1) | 셋 | P3(처리량 shm 1위)가 틀린 원인: 1단계 echo에는 없던 워커끼리의 응답 채널 경쟁인지 |
 | `cause-lockw` (본 측정 뒤 추가) | 서버 워커 수 1, 4, 16 (`-w`) | `lock`의 그림판 전체 mutex 조건(그림판 1, 클라이언트 64, 동시 요청 1, 기준 혼합) | 셋 | P6(락 대기 30% 이상)가 틀린 원인: 락을 다투는 스레드가 워커 수(4)로 묶여 있기 때문인지 |
 | `cause-mix` (본 측정 뒤 추가) | 요청 종류: DRAW만(`-m 100`) / SNAPSHOT만(`-m 0`) | `thr`와 같음 | 셋 | P3가 틀린 원인: 작은 요청과 64KB 요청의 비용이 IPC마다 어떻게 다른지 |
 | `cause-ring` (본 측정 뒤 추가) | shm 응답 링 칸 수 34·68·136 (`OSP_SHM_RESP_CHUNKS`) | `thr`와 같음 | shm | P3가 틀린 원인 후보: 응답 링에 64KB 응답이 2개만 들어가서인지 |
+| `target-all` (11/28 추가) | (사람 속도 부하) 처음 설계 / 개선한 설계. 보내는 위상은 클라이언트 번호로 흩는다 | `target`과 같음(클라이언트 1024, 초당 67개, 동시 요청 4). 한 반복 안에서 전후를 번갈아 잰다 | 셋 | 개선 전후의 요구사항 N-2 |
+| `cause-pipe` (11/28 추가) | 요청 받기 방식(받기 버퍼 `OSP_PIPE_RBUF=1`) / 응답 FIFO 용량 64KB·128KB·1MB(`OSP_PIPE_RESP_SZ`) | 클라이언트 1, 그림판 1. 기준 혼합·SNAPSHOT만·DRAW만은 동시 요청 16, SNAPSHOT 256 × 256 지연은 동시 요청 1 | pipe | pipe가 약한 원인이 메시지마다 `read` 2번인지, 응답 FIFO 용량(가장 큰 응답보다 56B 작음)인지 |
+| `imp-all` (11/28 추가) | 처음 설계 / 개선한 설계(세 IPC의 개선을 모두 켠 환경 변수 묶음) | 클라이언트 1·64·256·1024(`scale`의 기준 혼합 조건)와 `thr` 조건. 한 반복 안에서 전후를 번갈아 잰다 | 셋 | 세 IPC의 개선 전후 처리량과 지연(요구사항 N-6) |
+| `cause-scan` (11/28 추가) | 요청 링 방식 공용 / 클라이언트별(`OSP_SHM_REQ=per`) × 서버가 받을 클라이언트 수 `-N` 1024 / 16 | `thr`와 같음 | shm | shm 개선이 클라이언트 1개·동시 요청 16에서 느려진다면 그 원인: 클라이언트별 링은 요청을 받을 때마다 `-N`개 링을 훑기 때문인지. `-N`은 CSV의 `env` 열에 `-N=값`으로 남는다 |
 
-본 측정 뒤에 추가한 네 실험은 기본 목록에 없어 `EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh`로 따로 돌린다. 요청 하나당 시스템 콜 수는 `scripts/syscall-count.sh 20000 -m 90 -f 16`이 서버와 클라이언트를 `strace -f -c`로 감싸 센다(결과 `results/app/syscalls.txt`, strace가 느리게 하므로 시간은 쓰지 않는다).
+본 측정 뒤에 추가한 실험은 기본 목록에 없어 `EXPS="cause-workers cause-lockw cause-mix cause-ring" scripts/app-bench.sh`, `EXPS="cause-pipe" scripts/app-bench.sh`, `EXPS="imp-all target-all cause-scan" scripts/app-bench.sh`로 따로 돌린다. 전후·원인을 번갈아 재는 `imp-all`, `target-all`, `cause-scan`은 짝수 반복에서 조건 순서를 거꾸로 한다. 요청 하나당 시스템 콜 수는 `scripts/syscall-count.sh 20000 -m 90 -f 16`이 서버와 클라이언트를 `strace -f -c`로 감싸 센다(결과 `results/app/syscalls.txt`, strace가 느리게 하므로 시간은 쓰지 않는다).
 
-개선한 설계는 mq 응답 큐 8개 + 요청 큐 입장 제한(`OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1`)과 shm 클라이언트별 요청 링(`OSP_SHM_REQ=per`)이다. 설계는 [설계 명세의 변경 기록](../design/README.md#변경-기록)에, 결과는 [2단계 측정 결과](stage2.md)에 있다.
+개선한 설계는 mq 응답 큐 8개 + 요청 큐 입장 제한(`OSP_MQ_RESP_Q=8 OSP_MQ_ADMIT=1`), shm 클라이언트별 요청 링(`OSP_SHM_REQ=per`), pipe 응답 FIFO 키우기 + 송신 스레드(`OSP_PIPE_GROW=1 OSP_PIPE_ASYNC=1`)다. 서버는 모두 기본 설정(받을 클라이언트 `-N 1024`), 커널 한도는 기본값이고, 개선도 클라이언트당 IPC 버퍼 160KB(요구사항 N-5)를 넘지 않는다. 설계는 [설계 명세의 변경 기록](../design/README.md#변경-기록)에, 결과는 [2단계 측정 결과](stage2.md)에 있다.
 
-공통 조건: 서버 워커 4(`cause-workers`·`cause-lockw` 빼고), 타일 64, 클라이언트마다 워밍업 요청 200개(클라이언트 256 이상은 50개). 측정 시간(`-d`)은 `type`·`thr`·`cause-workers`·`cause-mix`·`cause-ring` 1초, `scale`·`lock`·`imp-scale`·`cause-lockw` 2초(클라이언트 256 이상 3초), `target`과 그 밖의 원인 확인·개선 실험 3초다.
+공통 조건: 서버 워커 4(`cause-workers`·`cause-lockw` 빼고), 타일 64, 클라이언트마다 워밍업 요청 200개(클라이언트 256 이상은 50개). 측정 시간(`-d`)은 `type`·`thr`·`cause-workers`·`cause-mix`·`cause-ring`·`cause-scan` 1초, `scale`·`lock`·`imp-scale`·`cause-lockw` 2초(클라이언트 256 이상 3초), `target`과 그 밖의 원인 확인·개선 실험 3초다(`cause-pipe` 1초, `imp-all`은 `scale`·`thr`과 같다).
+
+전원: 노트북은 전원 어댑터를 연결하고 배터리가 완충인 상태에서 잰다. 배터리로 돌면 CPU 전력 한도가 낮아져 처리량이 절반 아래로 떨어지고, 충전 중에는 전력·발열이 다르다. `scripts/app-bench.sh`는 시작할 때와 실행마다 어댑터(`/sys/class/power_supply`의 Mains) 연결과 배터리 상태(충전·방전 중이 아님)를 보고, 측정 중에 바뀌면 그 자리에서 멈춘다(시험 삼아 돌릴 때는 `ALLOW_BATTERY=1`). 측정 환경 `results/app/app_env.txt`에 전원 상태(`power:` 줄)를 남긴다. 2단계의 모든 측정은 이 상태였다(본 측정·원인 확인은 UPower 충전 기록, 개선 전후는 스크립트의 확인).
 
 실행 한 번의 순서(`scripts/app-bench.sh`)
 
@@ -235,7 +241,7 @@ utime_s,stime_s,nvcsw,nivcsw,vmrss_kb,vmhwm_kb,
 ipc_cap_kb,ipc_rss_kb,ipc_min_chan,checksum_ok,env
 ```
 
-- 2단계 파일: `results/app/<실험>.csv`(실행마다 클라이언트 줄 하나와 서버 줄 하나), 측정 환경 `results/app/app_env.txt`. 열은 `include/util.h`의 `APP_CSV_HEADER`이고 [2단계 실험](#2단계-실험)의 표와 같은 뜻이다. 원인 확인·설계 개선 실험도 같은 폴더의 `<실험>.csv`다(`cause-procs.csv`, `imp-mq-q.csv`, `imp-mq-req.csv`, `imp-scale.csv`, `imp-target.csv`, `mem-shm.csv`).
+- 2단계 파일: `results/app/<실험>.csv`(실행마다 클라이언트 줄 하나와 서버 줄 하나), 측정 환경 `results/app/app_env.txt`. 열은 `include/util.h`의 `APP_CSV_HEADER`이고 [2단계 실험](#2단계-실험)의 표와 같은 뜻이다. 원인 확인·설계 개선 실험도 같은 폴더의 `<실험>.csv`다(`cause-procs.csv`, `imp-mq-q.csv`, `imp-mq-req.csv`, `imp-scale.csv`, `imp-target.csv`, `mem-shm.csv`, `cause-*.csv`, `imp-all.csv`, `target-all.csv`, `cause-scan.csv`).
 - 1단계 원인 확인 실험의 비교 표는 `scripts/compare-bench.py`가 `docs/assets/bench/experiments.md`로 만든다. 2단계 요약표와 그래프는 `scripts/plot-app.py`가 `docs/assets/app/`에 만든다.
 - 그래프는 이 CSV에서만 만든다. 축 이름과 단위(µs, ms, MB/s)를 표시하고, 같은 조건의 세 IPC를 한 그래프에 그린다.
 

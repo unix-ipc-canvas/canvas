@@ -159,6 +159,9 @@ def t31():
     finish(0, f'2단계 CSV {len(files)}개, {n}줄({", ".join(sorted(roles))})이 APP_CSV_HEADER {len(want)}열과 같다')
 
 
+SINGLE_IPC = ('imp-mq-q', 'imp-mq-req', 'imp-scale', 'imp-target', 'mem-shm', 'cause-ring', 'cause-pipe', 'cause-scan')
+
+
 def t42():
     files = sorted(glob.glob('results/app/*.csv'))
     if not files:
@@ -180,21 +183,24 @@ def t42():
             k = tuple(r[c] for c in keys)
             conds.setdefault(k, {}).setdefault(r['ipc'], set()).add(r['run'])
     for k, by_ipc in sorted(conds.items()):
-        # 설계 개선(imp*)·메모리(mem-*)·shm 응답 링(cause-ring) 실험은 해당 IPC 만 잰다(app-bench.sh 의 ipcs_for). 나머지는 세 IPC 모두
-        single = k[0].startswith('imp') or k[0].startswith('mem-') or k[0] == 'cause-ring'
+        # 해당 IPC 만 재는 실험(app-bench.sh 의 ipcs_for): 처음 측정의 설계 개선(imp-mq-*, imp-scale, imp-target),
+        # 메모리(mem-shm), shm 응답 링(cause-ring)과 링 훑기(cause-scan), pipe 원인 확인(cause-pipe). 나머지는 세 IPC 모두
+        # (11/28 의 imp-all, target-all 도 세 IPC 모두)
+        single = k[0] in SINGLE_IPC
         for ipc in (sorted(by_ipc) if single else ('pipe', 'mq', 'shm')):
             n = len(by_ipc.get(ipc, ()))
             if n < 30:
                 problems.append(f'{k[0]} {dict(zip(keys[1:], k[1:]))}: {ipc} {n}번 (30번 이상이어야 한다)')
     exps = {k[0] for k in conds}
-    for need, why in (('target', 'N-2 목표 부하'),):
+    for need, why in (('target', 'N-2 목표 부하'), ('target-all', 'N-2 목표 부하의 개선 전후(위상을 흩음)'),
+                      ('imp-all', 'N-6 세 IPC 개선 전후')):
         if need not in exps:
             problems.append(f'{need} 실험이 없다 ({why})')
     if not any(e.startswith('imp-') for e in exps):
         problems.append('설계 개선 전후 실험(imp-*)이 없다 (N-6)')
     if problems:
         finish(1, '2단계 원자료가 모자라다', problems[:20])
-    finish(0, f'2단계 실험 {len(exps)}개, 조건 {len(conds)}개, 조건·IPC 마다 30번 이상 (개선·메모리·응답 링 실험은 해당 IPC 만)')
+    finish(0, f'2단계 실험 {len(exps)}개, 조건 {len(conds)}개, 조건·IPC 마다 30번 이상 (처음 측정의 개선·메모리·응답 링 실험과 pipe 원인 실험은 해당 IPC 만)')
 
 
 if __name__ == '__main__':
