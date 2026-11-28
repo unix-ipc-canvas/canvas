@@ -29,8 +29,9 @@
  *                    붙어 있는 클라이언트가 한도의 3/4 ÷ 128KB(기본 384개) 이하이고 0.1초 동안 새로 붙지 않았을 때만
  *                    키우고, 그보다 많이 붙으면 키운 FIFO 를 그 클라이언트에게 다음에 보낼 때 64KB 로 되돌린다.
  *   OSP_PIPE_ASYNC=1 송신 스레드: 워커는 응답 FIFO 에 막히지 않게(O_NONBLOCK) 쓰고, 자리가 없어 못 쓴 나머지는
- *                    클라이언트별 자리(PEND_CAP)에 옮겨 두고 바로 다음 요청으로 간다. 송신 스레드가 epoll 로 FIFO 에
- *                    자리가 나기를 기다렸다가 나머지를 쓴다. 나머지가 있는 동안 온 응답은 순서를 지키려고 그 뒤에 붙인다.
+ *                    클라이언트별 자리에 옮겨 두고 바로 다음 요청으로 간다. 송신 스레드가 epoll 로 FIFO 에 자리가
+ *                    나기를 기다렸다가 나머지를 쓴다. 나머지가 있는 동안 온 응답은 순서를 지키려고 그 뒤에 붙인다.
+ *                    FIFO 와 나머지를 합쳐 클라이언트당 160KB(N-5)를 넘을 때는 처음 설계처럼 워커가 기다린다.
  */
 #define _GNU_SOURCE             /* F_GETPIPE_SZ */
 #include <errno.h>
@@ -381,10 +382,12 @@ static bool srv_grown[MAX_CLIENTS];              /* srv_resp_mtx[id] 로 지킨�
 /*
  * 설계 개선 (OSP_PIPE_ASYNC=1): 워커가 다 못 쓴 응답의 나머지.
  * 클라이언트마다 PEND_CAP 바이트 자리를 서버를 처음 열 때 mmap 으로 한 번 잡는다(측정 중 malloc 없음, 쓴 쪽만 RSS).
- * 응답 FIFO 64KB 와 합쳐 클라이언트당 160KB 다(요구사항 N-5). 가장 큰 응답(65,592B)이 들어가고 남는다.
+ * 실제로 쓰는 한도는 160KB − 응답 FIFO 크기다(pend_cap_locked): 기본 64KB FIFO 면 96KB(가장 큰 응답 65,592B 가
+ * 들어간다), 키운 128KB FIFO 면 32KB. FIFO 와 합쳐 클라이언트당 160KB 를 넘지 않는다(요구사항 N-5).
  * 모든 칸은 srv_resp_mtx[id] 로 지킨다.
  */
-#define PEND_CAP  98304u
+#define PEND_CAP  98304u                         /* 나머지 자리의 최대 (기본 64KB FIFO 와 합쳐 160KB) */
+#define CLIENT_BUF_MAX 163840u                    /* 클라이언트당 버퍼 한도 160KB (요구사항 N-5): FIFO + 나머지 */
 #define EV_WAKE   UINT32_MAX                     /* epoll 의 data: 송신 스레드 깨우기(eventfd) */
 typedef struct {
     uint32_t off, len;           /* 아직 못 쓴 바이트 = pend_buf(id)[off, off + len) */
@@ -510,6 +513,8 @@ static void pend_clear_locked(uint32_t id)
     pthread_cond_broadcast(&srv_pend_cv[id]);
 }
 
+static size_t pend_cap_locked(uint32_t id);
+
 /* 메시지(머리 + payload)의 skip 바이트 뒤를 나머지 끝에 붙인다. 자리는 부르는 쪽이 확인했다 */
 static void pend_put(uint32_t id, const msg_hdr_t *hdr, const void *payload, size_t skip)
 {
@@ -529,6 +534,9 @@ static void pend_put(uint32_t id, const msg_hdr_t *hdr, const void *payload, siz
     memcpy(dst, (const char *)payload + (skip - hl), total - skip);
     if (p->len == 0) atomic_fetch_add(&srv_pend_n, 1);
     p->len += (uint32_t)add;
+#ifdef PEND_CHECK
+    if (p->len > pend_cap_locked(id)) { fprintf(stderr, "PEND_CHECK: id %u len %u cap %zu\n", id, p->len, pend_cap_locked(id)); abort(); }
+#endif
 }
 
 static void drop_resp_locked(uint32_t id);
@@ -594,7 +602,13 @@ static int async_start(void)
     srv_evfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     struct epoll_event ev = { .events = EPOLLIN, .data.u32 = EV_WAKE };
     if (srv_ep < 0 || srv_evfd < 0 || epoll_ctl(srv_ep, EPOLL_CTL_ADD, srv_evfd, &ev) < 0) goto fail;
-    if ((errno = pthread_create(&srv_sender, NULL, sender_main, NULL)) != 0) goto fail;
+    /* 신호는 응용이 정한 스레드가 받는다. 송신 스레드는 모두 막고 시작한다 (transport_mq.c 의 감시 스레드와 같다) */
+    sigset_t all, old;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, &old);
+    int rc = pthread_create(&srv_sender, NULL, sender_main, NULL);
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+    if (rc != 0) { errno = rc; goto fail; }
     srv_sender_on = true;
     return 0;
 fail:;
@@ -780,114 +794,90 @@ static int open_resp(uint32_t id)
 }
 
 /*
- * 설계 개선의 응답 보내기. 워커는 FIFO 에서 기다리지 않는다.
- *   나머지가 없으면 막히지 않게 써 보고, 자리가 없어 못 쓴 뒤쪽을 나머지로 옮긴 뒤 송신 스레드에 맡긴다.
- *   나머지가 있으면 순서를 지키려고 그 뒤에 붙인다. 붙일 자리(PEND_CAP)가 없을 때만 송신 스레드가 비울 때까지
- *   기다린다(동시 요청이 많은 클라이언트가 응답을 읽지 않을 때. 서버 메모리를 클라이언트당 160KB 로 묶는다).
- * srv_resp_mtx[id] 를 잡고 부른다. 성공(보냈거나 맡겼다) 0, 실패 -1.
+ * 이 클라이언트의 나머지 자리 한도. 응답 FIFO 와 나머지를 합쳐 클라이언트당 160KB(요구사항 N-5)를 넘지 않게
+ * 160KB − FIFO 크기로 잡는다: 기본 64KB FIFO 면 96KB, 키운 128KB FIFO 면 32KB.
+ * (한도에 걸려 8KB 로 만들어진 FIFO 도 64KB 로 쳐서 넉넉히 잡지 않는다.) srv_resp_mtx[id] 를 잡고 부른다.
  */
-/* 나머지가 다 빠지기를 기다린다. 세션이 바뀌거나 종료 중이면 -1 (EPIPE) */
-static int pend_wait_empty_locked(uint32_t id)
+static size_t pend_cap_locked(uint32_t id)
 {
-    pend_t *p = &srv_pend[id];
-    uint32_t gen = p->gen;
-    while (p->len > 0 && p->gen == gen && !atomic_load(&srv_stopping)) {
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        ts.tv_nsec += 50 * 1000000L;
-        if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
-        pthread_cond_timedwait(&srv_pend_cv[id], &srv_resp_mtx[id], &ts);
+    size_t fifo = srv_resp_sz > 0 ? (size_t)srv_resp_sz : srv_grown[id] ? (size_t)GROW_SZ : 65536u;
+    size_t room = fifo < CLIENT_BUF_MAX ? CLIENT_BUF_MAX - fifo : 0;
+    return room < PEND_CAP ? room : PEND_CAP;
+}
+
+/* 메시지(머리 + payload)의 *done 바이트 뒤를 막히지 않게 쓸 수 있는 만큼 쓴다. 자리가 없으면(EAGAIN) 0, 오류 -1 */
+static int write_from(int fd, const msg_hdr_t *hdr, const void *payload, size_t *done)
+{
+    size_t hl = sizeof *hdr, total = hl + hdr->payload_len;
+    while (*done < total) {
+        struct iovec iov[2];
+        int cnt = 0;
+        if (*done < hl) {
+            iov[cnt++] = (struct iovec){ (char *)hdr + *done, hl - *done };
+            if (hdr->payload_len) iov[cnt++] = (struct iovec){ (void *)payload, hdr->payload_len };
+        } else {
+            iov[cnt++] = (struct iovec){ (char *)payload + (*done - hl), total - *done };
+        }
+        ssize_t w = writev(fd, iov, cnt);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return errno == EAGAIN ? 0 : -1;
+        }
+        *done += (size_t)w;
     }
-    if (p->gen != gen || atomic_load(&srv_stopping)) { errno = EPIPE; return -1; }
     return 0;
 }
 
 /*
- * PEND_CAP 보다 큰 응답(응용에는 없다. 1단계 벤치마크와 전송 계층 시험의 1MB): 나머지가 다 빠진 뒤
- * 처음 설계처럼 끝까지 쓴다. 막히지 않는 fd 라 자리가 없으면 poll 로 기다린다. *done 에 쓴 바이트
+ * 설계 개선의 응답 보내기 (OSP_PIPE_ASYNC=1). 워커는 FIFO 에서 클라이언트를 기다리지 않는다.
+ *   나머지가 없으면 막히지 않게 써 보고, 자리가 없어 못 쓴 뒤쪽을 나머지로 옮긴 뒤 송신 스레드에 맡긴다.
+ *   나머지가 있으면 순서를 지키려고 그 뒤에 붙인다.
+ *   나머지는 클라이언트당 한도(pend_cap_locked) 안에서만 둔다. 넘칠 때는 처음 설계처럼 워커가 자리가 날 때까지
+ *   기다린다(동시 요청이 많은 클라이언트가 응답을 읽지 않을 때, 그리고 1단계 시험의 1MB 메시지).
+ * srv_resp_mtx[id] 를 잡고 부른다. 성공(보냈거나 맡겼다) 0, 실패 -1.
  */
-static int write_big_locked(int fd, const msg_hdr_t *hdr, const void *payload, size_t *done)
-{
-    struct iovec iov[2] = {
-        { (void *)hdr, sizeof *hdr },
-        { (void *)payload, hdr->payload_len },
-    };
-    struct iovec *v = iov;
-    int cnt = hdr->payload_len ? 2 : 1;
-    *done = 0;
-    while (cnt > 0) {
-        ssize_t w = writev(fd, v, cnt);
-        if (w < 0) {
-            if (errno == EINTR) continue;
-            if (errno != EAGAIN) return -1;
-            if (atomic_load(&srv_stopping)) { errno = EPIPE; return -1; }
-            struct pollfd pf = { .fd = fd, .events = POLLOUT };
-            (void)poll(&pf, 1, 50);
-            continue;
-        }
-        *done += (size_t)w;
-        size_t left = (size_t)w;
-        while (cnt > 0 && left >= v->iov_len) { left -= v->iov_len; v++; cnt--; }
-        if (cnt > 0) { v->iov_base = (char *)v->iov_base + left; v->iov_len -= left; }
-    }
-    return 0;
-}
-
 static int send_resp_async_locked(uint32_t id, const msg_hdr_t *hdr, const void *payload)
 {
     size_t total = sizeof *hdr + hdr->payload_len;
-    if (total > PEND_CAP) {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            if (srv_resp_fd[id] < 0) {
-                srv_resp_fd[id] = open_resp(id);
-                if (srv_resp_fd[id] < 0) return -1;
-            }
-            if (pend_wait_empty_locked(id) < 0) return -1;
-            size_t done;
-            if (write_big_locked(srv_resp_fd[id], hdr, payload, &done) == 0) return 0;
-            int e = errno;
-            drop_resp_locked(id);
-            errno = e;
-            if (!(e == EPIPE && done == 0)) return -1;
-        }
-        return -1;
-    }
     for (int attempt = 0; attempt < 2; attempt++) {
         if (srv_resp_fd[id] < 0) {
             srv_resp_fd[id] = open_resp(id);
             if (srv_resp_fd[id] < 0) return -1;
         }
         pend_t *p = &srv_pend[id];
-        if (p->len > 0) {
-            uint32_t gen = p->gen;
-            while (p->len + total > PEND_CAP && p->gen == gen && !atomic_load(&srv_stopping)) {
-                struct timespec ts;
-                clock_gettime(CLOCK_MONOTONIC, &ts);
-                ts.tv_nsec += 50 * 1000000L;                    /* 종료(srv_stopping)를 놓치지 않게 0.05초마다 본다 */
-                if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
-                pthread_cond_timedwait(&srv_pend_cv[id], &srv_resp_mtx[id], &ts);
-            }
-            if (p->gen != gen || atomic_load(&srv_stopping)) { errno = EPIPE; return -1; }
-            if (p->len > 0) {
-                pend_put(id, hdr, payload, 0);
-                pend_arm(id);
-                return 0;
-            }
-            /* 기다리는 동안 다 비었다. 아래에서 바로 써 본다 */
+        uint32_t gen = p->gen;
+        /* 앞선 나머지 뒤에 붙일 자리가 없으면 송신 스레드가 비울 때까지 기다린다 (종료를 놓치지 않게 0.05초마다 본다) */
+        while (p->len > 0 && p->len + total > pend_cap_locked(id) && p->gen == gen && !atomic_load(&srv_stopping)) {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            ts.tv_nsec += 50 * 1000000L;
+            if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+            pthread_cond_timedwait(&srv_pend_cv[id], &srv_resp_mtx[id], &ts);
         }
-        if (srv_grow) fit_resp_locked(id, total);
-        struct iovec iov[2] = {
-            { (void *)hdr, sizeof *hdr },
-            { (void *)payload, hdr->payload_len },
-        };
-        size_t done;
-        if (writev_full(srv_resp_fd[id], iov, hdr->payload_len ? 2 : 1, &done) == 0) return 0;
-        int e = errno;
-        if (e == EAGAIN) {                                      /* 자리가 없다: 못 쓴 뒤쪽을 맡긴다 */
-            pend_put(id, hdr, payload, done);
+        if (p->gen != gen || atomic_load(&srv_stopping)) { errno = EPIPE; return -1; }
+        if (p->len > 0) {                                       /* 순서를 지키려고 뒤에 붙인다 */
+            pend_put(id, hdr, payload, 0);
             pend_arm(id);
             return 0;
         }
+        if (srv_grow) fit_resp_locked(id, total);               /* 나머지가 없을 때만 키운다 */
+        size_t cap = pend_cap_locked(id), done = 0;
+        int fd = srv_resp_fd[id];
+        int rc = write_from(fd, hdr, payload, &done);
+        while (rc == 0 && total - done > cap) {                 /* 나머지가 한도를 넘는다: 자리가 날 때까지 기다리며 쓴다 */
+            if (atomic_load(&srv_stopping)) { errno = EPIPE; rc = -1; break; }
+            struct pollfd pf = { .fd = fd, .events = POLLOUT };
+            (void)poll(&pf, 1, 50);
+            rc = write_from(fd, hdr, payload, &done);
+        }
+        if (rc == 0) {
+            if (done < total) {                                 /* 못 쓴 뒤쪽을 송신 스레드에 맡긴다 */
+                pend_put(id, hdr, payload, done);
+                pend_arm(id);                                   /* 송신 스레드의 epoll 에 EPOLLOUT 을 건다 */
+            }
+            return 0;
+        }
+        int e = errno;
         drop_resp_locked(id);                                   /* 중간까지 쓴 스트림은 이어 쓸 수 없다 */
         errno = e;
         if (!(e == EPIPE && done == 0)) return -1;              /* 처음 설계와 같은 재시도 (아래 tp_send_resp) */
